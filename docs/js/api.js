@@ -10,10 +10,6 @@
     try { if (t) { sessionStorage.setItem('upmc_token', t); sessionStorage.setItem('upmc_user', JSON.stringify(u)); } else { sessionStorage.clear(); } } catch (e) {}
   }
 
-  // decode the (Google-signed) ID token payload for display only; the server verifies it
-  function decode(jwt) {
-    try { const p = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'); return JSON.parse(decodeURIComponent(escape(atob(p)))); } catch (e) { return {}; }
-  }
 
   async function post(payload) {
     let res;
@@ -36,9 +32,8 @@
   }
 
   window.UPMC_API = {
-    DEMO, call, decode,
+    DEMO, call,
     get user() { return user; }, get token() { return token; },
-    signIn(credential) { const p = decode(credential); setSession(credential, { email: p.email, name: p.name || p.email, picture: p.picture }); },
     async passwordSignIn(username, password) {
       const out = await post({ action: 'login', username, password });
       if (!out.ok) throw new Error(out.error || 'Could not sign in.');
@@ -48,7 +43,7 @@
     demoSignIn() { setSession('demo', { email: 'demo@example.com', name: 'Demo operator', isAdmin: true }); },
     signOut() {
       if (!DEMO && token && token.indexOf('pw.') === 0) post({ action: 'logout', token }).catch(() => {});
-      setSession(null, null); try { google.accounts.id.disableAutoSelect(); } catch (e) {}
+      setSession(null, null);
     },
     setAdmin(v) { if (user) { user.isAdmin = v; setSession(token, user); } },
   };

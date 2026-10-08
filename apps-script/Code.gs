@@ -1,8 +1,8 @@
 /**
  * UPMC2 — JSON API for the GitHub-hosted UPMC2 app.
  * Data: the Unified PMC Google Sheet (tabs FR, DFR, FG-HFG, Change Log, Lists).
- * Auth: either a Google Sign-In ID token (verified with Google) or a session from a username/password login.
- * Private settings (client ID, admin emails, password hashes) live in Config.local.gs, which is NOT in the public repo.
+ * Auth: username/password login; the server issues a session token kept in the script cache.
+ * Private settings (password hashes) live in Config.local.gs, which is NOT in the public repo.
  * Deploy: Web app · Execute as: Me · Who has access: Anyone.
  */
 
@@ -31,7 +31,7 @@ const MAX_FAILS = 5, LOCK_MIN = 15;
 /** Private settings from Config.local.gs (read lazily so file order does not matter). */
 function local_() {
   const L = (typeof LOCAL_CONFIG !== 'undefined') ? LOCAL_CONFIG : {};
-  return { clientId: L.CLIENT_ID || '', admins: (L.ADMINS || []).map(a => String(a).toLowerCase()), accounts: L.ACCOUNTS || {} };
+  return { accounts: L.ACCOUNTS || {} };
 }
 
 /* ============================================================ HTTP */
@@ -93,28 +93,12 @@ function login_(body) {
 }
 function logout_(token) { if (token && String(token).indexOf('pw.') === 0) CacheService.getScriptCache().remove('sess_' + token); }
 
-/** Returns {email, name, isAdmin} for a password session or a Google ID token (verified with Google, cached). */
+/** Returns {email, name, isAdmin} for a valid password session. */
 function authenticate_(token) {
-  if (!token) throw new Error('Please sign in.');
-  const cache = CacheService.getScriptCache();
-  if (String(token).indexOf('pw.') === 0) {
-    const s = cache.get('sess_' + token);
-    if (!s) throw new Error('Your sign-in has expired. Please sign in again.');
-    return JSON.parse(s);
-  }
-  const key = 'tok_' + Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, token)).slice(0, 40);
-  const hit = cache.get(key);
-  if (hit) return JSON.parse(hit);
-  const res = UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(token), { muteHttpExceptions: true });
-  if (res.getResponseCode() !== 200) throw new Error('Your sign-in has expired. Please sign in again.');
-  const info = JSON.parse(res.getContentText());
-  if (!local_().clientId || info.aud !== local_().clientId) throw new Error('Sign-in is not for this app.');
-  if (String(info.email_verified) !== 'true') throw new Error('Your Google email is not verified.');
-  const email = String(info.email).toLowerCase();
-  const user = { email, name: info.name || email, isAdmin: local_().admins.indexOf(email) >= 0 };
-  const ttl = Math.max(60, Math.min(3600, Number(info.exp) - Math.floor(Date.now() / 1000) - 30));
-  cache.put(key, JSON.stringify(user), ttl);
-  return user;
+  if (!token || String(token).indexOf('pw.') !== 0) throw new Error('Please sign in.');
+  const s = CacheService.getScriptCache().get('sess_' + token);
+  if (!s) throw new Error('Your sign-in has expired. Please sign in again.');
+  return JSON.parse(s);
 }
 
 /* ============================================================ sheet helpers */
@@ -402,8 +386,7 @@ function mark_(sh, row, lc, status, whenTxt, note) {
 function setup() {
   readLists_(); logSheet_();
   Object.keys(CADRES).forEach(c => Logger.log(c + ': ' + readSheet_(c).rows.length + ' officers'));
-  UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo?id_token=x', { muteHttpExceptions: true });
   const L = local_();
-  Logger.log('Google client ID set: ' + !!L.clientId + ' · admins: ' + L.admins.join(', ') + ' · password users: ' + Object.keys(L.accounts).join(', '));
+  Logger.log('Password users: ' + Object.keys(L.accounts).map(u => u + ' (' + L.accounts[u].role + ')').join(', '));
   if (typeof LOCAL_CONFIG === 'undefined') Logger.log('WARNING: Config.local.gs is missing. Add it as a second script file.');
 }
