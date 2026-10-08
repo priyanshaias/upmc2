@@ -87,12 +87,12 @@
     if (!u) { $('#who').innerHTML = ''; return; }
     const o = op();
     const admin = S.meta && S.meta.user && S.meta.user.isAdmin;
-    $('#who').innerHTML = `${admin ? '<a class="btn sm ghost hide-sm" href="#/admin">Approvals</a>' : ''}
+    $('#who').innerHTML = `${admin ? '<a class="btn sm ghost hide-sm" href="#/dash">Dashboard</a><a class="btn sm ghost hide-sm" href="#/admin">Approvals</a>' : ''}
       <button class="menu-btn" id="menuBtn" aria-haspopup="true" aria-expanded="false" title="${esc(u.email)}">
         <span class="av">${esc(FL.initials(o && o.name || u.name))}</span><span class="hide-sm">${esc(o && o.name || u.name)}</span><span aria-hidden="true">▾</span></button>
       <div class="menu hidden" id="menu" role="menu">
         <div class="menu-who"><b>${esc(o && o.name || u.name)}</b><span>${esc(u.email)}</span></div>
-        ${admin ? '<a role="menuitem" href="#/admin">Approvals</a>' : ''}
+        ${admin ? '<a role="menuitem" href="#/dash">Dashboard</a><a role="menuitem" href="#/admin">Approvals</a>' : ''}
         <a role="menuitem" href="#/circles">All circles</a>
         <button role="menuitem" id="meBtn">My details</button>
         <button role="menuitem" id="outBtn">Sign out</button>
@@ -161,7 +161,7 @@
   }
 
   async function ensureMeta(force) {
-    if (S.meta && !force) return S.meta;
+    if (S.meta && !force && !S.meta.stale) return S.meta;
     S.meta = await guard(() => API.call('meta'));
     if (S.meta.user) API.setAdmin(!!S.meta.user.isAdmin);
     renderWho();
@@ -397,13 +397,13 @@
     if (mis.length && !confirm(`The ${mis.join(' and ')} ${mis.length > 1 ? 'are' : 'is'} not recorded.\n\nPress Cancel and use Edit to fill ${mis.length > 1 ? 'them' : 'it'}, or OK to verify anyway.`)) return;
     const b = busy('Saving verification…', false, 'save');
     try {
-      const r = await guard(() => API.call('verify', { cadre: o.cadre, id: o.id, circle: S.div.circle, division: S.div.division, operator: op() }));
+      const r = await guard(() => API.call('verify', { cadre: o.cadre, id: o.id, circle: o.data.Circle, division: o.data.Division, operator: op() }));
       Object.assign(o.data, { Verification: 'Verified - All correct', 'Last Updated By': r.verifiedBy, 'Last Updated On': r.verifiedOn });
       if (o.status !== 'pending') o.status = 'verified';
       bumpCounts(o, 'verified');
       b.done(); closeProfile(true);
       toast(`${FL.cleanName(o.data.Name)} verified.`);
-      drawDivision(o.cadre + '|' + o.id);
+      (S.div.after || drawDivision)(o.cadre + '|' + o.id);
     } catch (e) { b.done(); }
   }
 
@@ -413,18 +413,18 @@
     if (!changes.some(c => c.field === 'Verification')) changes.push({ field: 'Verification', value: 'Corrected' });
     const b = busy('Sending for approval…', false, 'save');
     try {
-      const r = await guard(() => API.call('submit', { cadre: o.cadre, id: o.id, circle: S.div.circle, division: S.div.division, changes, operator: op() }));
+      const r = await guard(() => API.call('submit', { cadre: o.cadre, id: o.id, circle: o.data.Circle, division: o.data.Division, changes, operator: op() }));
       o.pending = (o.pending || []).concat(changes.map(c => ({ field: c.field, value: c.value, by: (op() || {}).name, on: 'now' })));
       o.status = 'pending'; bumpCounts(o, 'pending');
       b.done(); S.edits = {}; S.editSecs = new Set(); closeProfile(true);
       toast(`Sent for approval (${r.count} change${r.count > 1 ? 's' : ''}).`);
-      drawDivision(o.cadre + '|' + o.id);
+      (S.div.after || drawDivision)(o.cadre + '|' + o.id);
     } catch (e) { b.done(); }
   }
 
   function bumpCounts(o, to) {
-    const c = S.meta && S.meta.counts && S.meta.counts[S.div.circle + '|' + S.div.division];
-    if (!c) return;
+    const c = S.meta && S.meta.counts && S.meta.counts[o.data.Circle + '|' + o.data.Division];
+    if (!c || S.div.after) { if (S.meta) S.meta.stale = true; return; }
     const n = { verified: 0, pending: 0 }; S.div.officers.forEach(x => { if (n[x.status] != null) n[x.status]++; });
     c.verified = n.verified; c.pending = n.pending;
   }
@@ -500,16 +500,19 @@
     $('#aq').oninput = draw; draw();
   }
 
+  window.UPMC_APP = { S, esc, icon, busy, loaderHtml, animateLoader, toast, guard, openProfile, ensureMeta, TICK, STATUS_TXT, pdfOne };
+
   /* ---------------- router ---------------- */
   async function route() {
     if (!API.user) { renderWho(); renderSignin(); return; }
     if (!op()) { renderOperator(false); return; }
     renderWho();
-    const parts = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent);
+    const parts = location.hash.replace(/^#\/?/, '').split('?')[0].split('/').map(decodeURIComponent);
     try {
       if (parts[0] === 'c' && parts[1]) await renderDivisions(parts[1]);
       else if (parts[0] === 'd' && parts[2]) await renderDivision(parts[1], parts[2]);
       else if (parts[0] === 'admin') await renderAdmin();
+      else if (parts[0] === 'dash') { await ensureMeta(); await window.UPMC_DASH.render(app); }
       else await renderCircles();
     } catch (e) { /* toast already shown */ }
     window.scrollTo(0, 0);

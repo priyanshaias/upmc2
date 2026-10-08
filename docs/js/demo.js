@@ -139,6 +139,11 @@
         rejected: log.filter(l => l.status === 'Rejected').length, verifiedToday: 0, byCadre: {} };
     }
     if (action === 'adminRefresh') return { builtAt: now(), divisions: 70 };
+    if (action === 'adminData') {
+      const officersOf = []; CIRCLES.forEach(c => c.divisions.forEach(d => officers(c.circle, d).forEach(o => { if (o.cadre === body.cadre) officersOf.push(o); })));
+      const schema = {}; schema[body.cadre] = HEAD[body.cadre].map(h => ({ name: h, type: typeOf(h) }));
+      return { cadre: body.cadre, officers: JSON.parse(JSON.stringify(officersOf)), schema, builtAt: now(), circles: CIRCLES };
+    }
     if (action === 'adminChanges') { const f = body.filter || {}; return log.filter(l => !f.status || f.status === 'All' || l.status === f.status).slice().reverse(); }
     if (action === 'adminDecide') {
       let applied = 0, rejected = 0;

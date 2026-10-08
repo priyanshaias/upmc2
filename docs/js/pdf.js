@@ -130,23 +130,24 @@
     return name;
   }
 
-  async function division(list, schemaByCadre, circle, div, onProgress) {
+  async function division(list, schemaByCadre, circle, div, onProgress, opts) {
+    opts = opts || {};
     const img = await emblemPng();
     const counts = { verified: 0, pending: 0, unverified: 0 };
     list.forEach(o => counts[o.status] = (counts[o.status] || 0) + 1);
     const byCadre = {}; list.forEach(o => byCadre[o.cadre] = (byCadre[o.cadre] || 0) + 1);
     const cover = [
-      ...header(img, 'Division information sheets'),
-      { text: div, fontSize: 24, bold: true, color: C.ink, alignment: 'center', margin: [0, 6, 0, 2] },
-      { text: `${circle} circle  ·  ${list.length} officers`, fontSize: 11, color: C.subtle, alignment: 'center', margin: [0, 0, 0, 16] },
+      ...header(img, opts.kicker || 'Division information sheets'),
+      { text: opts.title || div, fontSize: 24, bold: true, color: C.ink, alignment: 'center', margin: [0, 6, 0, 2] },
+      { text: opts.subtitle || `${circle} circle  ·  ${list.length} officers`, fontSize: 11, color: C.subtle, alignment: 'center', margin: [0, 0, 0, 16] },
       { table: { widths: ['*', '*', '*', '*'], body: [[
         ...[['Officers', list.length, C.ink], ['Verified', counts.verified, C.green], ['Awaiting approval', counts.pending, C.violet], ['Not verified', counts.unverified, C.subtle]]
           .map(([l, n, c]) => ({ stack: [{ text: l, fontSize: 8.5, color: C.subtle }, { text: String(n), fontSize: 20, bold: true, color: c }], margin: [10, 8, 10, 8] }))]] },
         layout: { hLineColor: () => C.border, vLineColor: () => C.border, hLineWidth: () => 0.8, vLineWidth: () => 0.8 }, margin: [0, 0, 0, 16] },
-      { text: 'Index', bold: true, fontSize: 11, color: C.ink, margin: [0, 0, 0, 6] },
-      { table: { headerRows: 1, widths: [34, '*', 52, 78, 92, 34], body: [
-        ['Sheet', 'Name', 'Desig.', 'HRMS ID', 'Status', 'Page'].map(t => ({ text: t, bold: true, fontSize: 8.5, color: '#ffffff', fillColor: C.ink, margin: [4, 4, 4, 4] })),
-        ...list.map((o, i) => [String(i + 1), F().cleanName(o.data.Name), o.data.Designation || o.cadre, o.id, (STATUS[o.status] || STATUS.unverified)[0], String(i + 2)]
+      { text: 'Index  ·  sheets follow in this order, one page each', bold: true, fontSize: 11, color: C.ink, margin: [0, 0, 0, 6] },
+      { table: { headerRows: 1, widths: [34, '*', 52, 78, 92, 90], body: [
+        ['Sheet', 'Name', 'Desig.', 'HRMS ID', 'Status', 'Division'].map(t => ({ text: t, bold: true, fontSize: 8.5, color: '#ffffff', fillColor: C.ink, margin: [4, 4, 4, 4] })),
+        ...list.map((o, i) => [String(i + 1), F().cleanName(o.data.Name), o.data.Designation || o.cadre, o.id, (STATUS[o.status] || STATUS.unverified)[0], o.data.Division || '']
           .map((t, j) => ({ text: t, fontSize: 8.5, color: j === 4 ? (STATUS[o.status] || STATUS.unverified)[1] : C.ink, bold: j === 1 || j === 4, margin: [4, 3, 4, 3] })))] },
         layout: { hLineWidth: (i) => i < 2 ? 0 : 0.5, vLineWidth: () => 0, hLineColor: () => C.line, fillColor: (i) => i > 0 && i % 2 === 0 ? '#fbfbfa' : null } },
     ];
@@ -158,10 +159,46 @@
       if (onProgress && i % 5 === 0) { onProgress((i + 1) / list.length); await new Promise(r => setTimeout(r, 0)); }
     }
     const plain = x => String(x || '').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_|_$/g, '');
-    const name = `${plain(div)}_${plain(circle)}_officers_${stamp().slice(0, 10).replace(/-/g, '')}.pdf`;
-    await new Promise(res => window.pdfMake.createPdf(doc(content, `UPMC2 · ${div} division`)).download(name, res));
+    const name = opts.fileName || `${plain(div)}_${plain(circle)}_officers_${stamp().slice(0, 10).replace(/-/g, '')}.pdf`;
+    await new Promise(res => window.pdfMake.createPdf(doc(content, opts.footer || `UPMC2 · ${div} division`)).download(name, res));
     return name;
   }
 
-  window.UPMC_PDF = { officer, division, _doc: doc, _officerPage: officerPage, emblemPng };
+  /** Dashboard report: letterhead, filters, summary and the officer table (landscape A4). */
+  async function report(r) {
+    const img = await emblemPng();
+    const head = [
+      { columns: [
+        { image: img, width: 34 },
+        { width: '*', margin: [12, 2, 0, 0], stack: [
+          { text: 'Government of West Bengal', bold: true, fontSize: 12, color: C.ink },
+          { text: 'Department of Forests  ·  Directorate of Forests', fontSize: 9.5, color: C.body },
+          { text: 'Aranya Bhawan, LA-10A, Sector-III, Salt Lake, Kolkata - 700106', fontSize: 8.5, color: C.subtle },
+        ] },
+        { width: 'auto', alignment: 'right', stack: [
+          { text: r.title, bold: true, fontSize: 15, color: C.ink, alignment: 'right' },
+          { text: r.subtitle, fontSize: 8.5, color: C.subtle, alignment: 'right', margin: [0, 2, 0, 0] },
+        ] }] },
+      { canvas: [{ type: 'line', x1: 0, y1: 0, x2: 762, y2: 0, lineWidth: 1.2, lineColor: C.ink }], margin: [0, 8, 0, 8] },
+      { text: [{ text: 'Filters: ', bold: true, color: C.ink }, r.filters || 'none'], fontSize: 8.5, color: C.body, margin: [0, 0, 0, 8] },
+      { table: { widths: r.kpis.map(() => '*'), body: [r.kpis.map(k => ({ stack: [{ text: k[0], fontSize: 7.5, color: C.subtle }, { text: String(k[1]), fontSize: 14, bold: true, color: k[2] || C.ink }], margin: [6, 4, 6, 4] }))] },
+        layout: { hLineColor: () => C.border, vLineColor: () => C.border, hLineWidth: () => 0.7, vLineWidth: () => 0.7 }, margin: [0, 0, 0, 10] },
+    ];
+    const cols = r.columns;
+    const body = [cols.map(c => ({ text: c.label, bold: true, fontSize: 7.5, color: '#ffffff', fillColor: C.ink, margin: [3, 3, 3, 3], alignment: c.num ? 'right' : 'left' }))];
+    r.rows.forEach(row => body.push(cols.map((c, i) => {
+      const v = row[i], cell = { text: v == null || v === '' ? '—' : String(v), fontSize: 7.5, color: v === '' || v == null ? C.faint : C.ink, margin: [3, 2.5, 3, 2.5], alignment: c.num ? 'right' : 'left' };
+      if (c.warn && c.warn(row)) Object.assign(cell, { color: C.orange, bold: true });
+      if (c.bold) cell.bold = true;
+      return cell;
+    })));
+    const content = [...head, { table: { headerRows: 1, widths: cols.map(c => c.w || 'auto'), body },
+      layout: { hLineWidth: (i) => i < 2 ? 0 : 0.4, vLineWidth: () => 0, hLineColor: () => C.line, fillColor: (i) => i > 0 && i % 2 === 0 ? '#fbfbfa' : null } }];
+    const dd = doc(content, 'UPMC2 · ' + r.title);
+    dd.pageOrientation = 'landscape'; dd.pageMargins = [40, 30, 40, 40];
+    await new Promise(res => window.pdfMake.createPdf(dd).download(r.fileName, res));
+    return r.fileName;
+  }
+
+  window.UPMC_PDF = { officer, division, report, _doc: doc, _officerPage: officerPage, emblemPng };
 })();

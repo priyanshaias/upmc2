@@ -49,7 +49,7 @@ function doPost(e) {
     const user = authenticate_(body.token);
     const handlers = {
       meta: meta_, division: division_, verify: verify_, submit: submit_,
-      adminSummary: adminSummary_, adminChanges: adminChanges_, adminDecide: adminDecide_, adminRefresh: adminRefresh_,
+      adminSummary: adminSummary_, adminChanges: adminChanges_, adminDecide: adminDecide_, adminRefresh: adminRefresh_, adminData: adminData_,
     };
     const fn = handlers[body.action];
     if (!fn) throw new Error('Unknown action: ' + body.action);
@@ -434,6 +434,23 @@ function adminDecide_(body, user) {
     buildAll_();
     return res;
   } finally { lock.releaseLock(); }
+}
+
+/** Admin dashboard: every officer of one cadre (from the cache), with the field schema. */
+function adminData_(body) {
+  const code = body.cadre; cadre_(code);
+  const meta = getMeta_(), schema = getSchema_();
+  const keys = Object.keys(meta.counts).filter(k => meta.counts[k].total).map(k => 'div|' + k);
+  const got = CacheService.getScriptCache().getAll(keys);
+  let divs = {};
+  if (Object.keys(got).length < keys.length) divs = buildAll_().divs;
+  else keys.forEach(k => divs[k] = ungz_(got[k]));
+  const officers = [];
+  Object.keys(divs).forEach(k => divs[k].officers.forEach(o => {
+    if (o.cadre !== code) return;
+    const x = Object.assign({}, o); delete x.row; officers.push(x);
+  }));
+  return { cadre: code, officers, schema: { [code]: schema[code] }, builtAt: meta.builtAt, circles: meta.circles };
 }
 
 /** Admin: re-read the sheet now (use after editing the sheet by hand). */
