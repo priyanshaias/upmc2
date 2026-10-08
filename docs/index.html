@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UPMC2 · Officer data verification</title>
+<meta name="description" content="Directorate of Forests, West Bengal · verify officer posting and service details">
+<link rel="icon" href="assets/emblem.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400..900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header class="topbar"><div class="in">
+  <a href="#/" class="mark" aria-label="Home"><img src="assets/emblem.svg" alt=""></a>
+  <div class="brand">UPMC2<small>Directorate of Forests · West Bengal</small></div>
+  <span id="demoFlag" class="demo-flag hidden">Demo data</span>
+  <span class="sp"></span>
+  <div id="who" class="who"></div>
+</div></header>
+
+<main id="app" aria-live="polite"></main>
+
+<div id="toast" class="toast" role="status"></div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.10/pdfmake.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.10/vfs_fonts.min.js" defer></script>
+<script src="js/config.js" defer></script>
+<script src="js/demo.js" defer></script>
+<script src="js/api.js" defer></script>
+<script src="js/fields.js" defer></script>
+<script src="js/pdf.js" defer></script>
+<script src="js/app.js" defer></script>
+</body>
+</html>
