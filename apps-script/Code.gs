@@ -1,13 +1,12 @@
 /**
  * UPMC2 — JSON API for the GitHub-hosted UPMC2 app.
  * Data: the Unified PMC Google Sheet (tabs FR, DFR, FG-HFG, Change Log, Lists).
- * Auth: every request carries a Google Sign-In ID token; it is verified with Google and the email is taken from it.
+ * Auth: either a Google Sign-In ID token (verified with Google) or a session from a username/password login.
+ * Private settings (client ID, admin emails, password hashes) live in Config.local.gs, which is NOT in the public repo.
  * Deploy: Web app · Execute as: Me · Who has access: Anyone.
  */
 
 const CONFIG = {
-  CLIENT_ID: 'PASTE-YOUR-OAUTH-CLIENT-ID.apps.googleusercontent.com',
-  ADMINS: ['admin-1@gmail.com', 'admin-2@gmail.com'],   // replace with the admin Google accounts
   TZ: 'Asia/Kolkata',
   LOG: 'Change Log',
   LISTS: 'Lists',
@@ -26,6 +25,14 @@ const LOG_HEADERS = ['Change ID', 'Submission ID', 'Submitted On', 'Submitted By
   'Submitter Designation', 'Submitter Mobile', 'Cadre', 'Type', 'Employee ID', 'Name', 'Circle', 'Division',
   'Field', 'Old Value', 'New Value', 'Status', 'Reviewed On', 'Review Note'];
 const VERIFIED = 'Verified - All correct';
+const SESSION_HOURS = 6;          // password sessions last this long (Apps Script cache maximum)
+const MAX_FAILS = 5, LOCK_MIN = 15;
+
+/** Private settings from Config.local.gs (read lazily so file order does not matter). */
+function local_() {
+  const L = (typeof LOCAL_CONFIG !== 'undefined') ? LOCAL_CONFIG : {};
+  return { clientId: L.CLIENT_ID || '', admins: (L.ADMINS || []).map(a => String(a).toLowerCase()), accounts: L.ACCOUNTS || {} };
+}
 
 /* ============================================================ HTTP */
 
@@ -37,6 +44,8 @@ function doPost(e) {
   let body = {};
   try {
     body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    if (body.action === 'login') return json_({ ok: true, data: login_(body) });
+    if (body.action === 'logout') { logout_(body.token); return json_({ ok: true, data: {} }); }
     const user = authenticate_(body.token);
     const handlers = {
       meta: meta_, division: division_, verify: verify_, submit: submit_,
@@ -57,20 +66,52 @@ function json_(o) {
 
 /* ============================================================ auth */
 
-/** Verifies a Google ID token with Google and returns {email, name, isAdmin}. Cached for the token's life. */
-function authenticate_(token) {
-  if (!token) throw new Error('Please sign in with Google.');
+/* ---------- username / password ---------- */
+
+function sha256hex_(s) {
+  return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, s, Utilities.Charset.UTF_8)
+    .map(b => ((b + 256) % 256).toString(16).padStart(2, '0')).join('');
+}
+
+/** {username, password} -> {token, user}. Wrong attempts lock the username for LOCK_MIN minutes. */
+function login_(body) {
   const cache = CacheService.getScriptCache();
+  const u = String(body.username || '').trim().toLowerCase(), pw = String(body.password || '');
+  if (!u || !pw) throw new Error('Enter your username and password.');
+  const failKey = 'fail_' + u, fails = Number(cache.get(failKey) || 0);
+  if (fails >= MAX_FAILS) throw new Error('Too many wrong attempts. Try again after ' + LOCK_MIN + ' minutes.');
+  const acc = local_().accounts[u];
+  if (!acc || sha256hex_(acc.salt + pw) !== acc.hash) {
+    cache.put(failKey, String(fails + 1), LOCK_MIN * 60);
+    throw new Error('Wrong username or password.');
+  }
+  cache.remove(failKey);
+  const token = 'pw.' + Utilities.getUuid() + Utilities.getUuid().slice(0, 8);
+  const user = { email: u + ' (password login)', name: acc.name || u, isAdmin: acc.role === 'admin', username: u };
+  cache.put('sess_' + token, JSON.stringify(user), SESSION_HOURS * 3600);
+  return { token, user };
+}
+function logout_(token) { if (token && String(token).indexOf('pw.') === 0) CacheService.getScriptCache().remove('sess_' + token); }
+
+/** Returns {email, name, isAdmin} for a password session or a Google ID token (verified with Google, cached). */
+function authenticate_(token) {
+  if (!token) throw new Error('Please sign in.');
+  const cache = CacheService.getScriptCache();
+  if (String(token).indexOf('pw.') === 0) {
+    const s = cache.get('sess_' + token);
+    if (!s) throw new Error('Your sign-in has expired. Please sign in again.');
+    return JSON.parse(s);
+  }
   const key = 'tok_' + Utilities.base64EncodeWebSafe(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, token)).slice(0, 40);
   const hit = cache.get(key);
   if (hit) return JSON.parse(hit);
   const res = UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(token), { muteHttpExceptions: true });
   if (res.getResponseCode() !== 200) throw new Error('Your sign-in has expired. Please sign in again.');
   const info = JSON.parse(res.getContentText());
-  if (info.aud !== CONFIG.CLIENT_ID) throw new Error('Sign-in is not for this app.');
+  if (!local_().clientId || info.aud !== local_().clientId) throw new Error('Sign-in is not for this app.');
   if (String(info.email_verified) !== 'true') throw new Error('Your Google email is not verified.');
   const email = String(info.email).toLowerCase();
-  const user = { email, name: info.name || email, isAdmin: CONFIG.ADMINS.some(a => a.toLowerCase() === email) };
+  const user = { email, name: info.name || email, isAdmin: local_().admins.indexOf(email) >= 0 };
   const ttl = Math.max(60, Math.min(3600, Number(info.exp) - Math.floor(Date.now() / 1000) - 30));
   cache.put(key, JSON.stringify(user), ttl);
   return user;
@@ -362,5 +403,7 @@ function setup() {
   readLists_(); logSheet_();
   Object.keys(CADRES).forEach(c => Logger.log(c + ': ' + readSheet_(c).rows.length + ' officers'));
   UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo?id_token=x', { muteHttpExceptions: true });
-  Logger.log('OK. CLIENT_ID set: ' + (CONFIG.CLIENT_ID.indexOf('PASTE') < 0));
+  const L = local_();
+  Logger.log('Google client ID set: ' + !!L.clientId + ' · admins: ' + L.admins.join(', ') + ' · password users: ' + Object.keys(L.accounts).join(', '));
+  if (typeof LOCAL_CONFIG === 'undefined') Logger.log('WARNING: Config.local.gs is missing. Add it as a second script file.');
 }

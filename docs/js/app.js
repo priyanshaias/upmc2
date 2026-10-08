@@ -63,21 +63,37 @@
 
   /* ---------------- sign in & operator details ---------------- */
   function renderSignin() {
+    const google = !API.DEMO && CFG.CLIENT_ID;
     app.innerHTML = `<section class="signin"><div class="card">
       <img class="emb" src="assets/emblem.svg" alt="National Emblem of India">
       <h1>Officer data verification</h1>
       <p class="muted">Directorate of Forests, West Bengal. Sign in to check and update the details of officers in your division.</p>
       ${API.DEMO ? `<button class="btn primary" id="demoBtn" style="width:100%">Try with demo data</button>
         <p class="faint" style="margin:12px 0 0">This copy is not connected to the live sheet. All names and numbers are made up.</p>`
-        : `<div class="gbtn" id="gbtn"><div class="spinner"></div></div><p class="faint" style="margin:14px 0 0">Use your Google account. Your email is recorded with every change you make.</p>`}
+        : `${google ? `<div class="gbtn" id="gbtn"><div class="spinner"></div></div><div class="or">or sign in with your username</div>` : ''}
+          <form class="form" id="pwForm" autocomplete="on">
+            <label>Username<input name="username" autocomplete="username" autocapitalize="none" required></label>
+            <label>Password<span class="pw"><input name="password" type="password" autocomplete="current-password" required>
+              <button type="button" class="btn sm ghost" id="showPw" aria-label="Show password">Show</button></span></label>
+            <button class="btn primary" type="submit" id="pwBtn">Sign in</button>
+            <div id="pwMsg" class="faint" role="alert"></div>
+          </form>`}
     </div></section>`;
     if (API.DEMO) { $('#demoBtn').onclick = () => { API.demoSignIn(); start(); }; return; }
+    $('#showPw').onclick = () => { const i = $('#pwForm').password; i.type = i.type === 'password' ? 'text' : 'password'; $('#showPw').textContent = i.type === 'password' ? 'Show' : 'Hide'; };
+    $('#pwForm').onsubmit = async e => {
+      e.preventDefault();
+      const f = e.target, btn = $('#pwBtn');
+      btn.disabled = true; btn.textContent = 'Signing in…'; $('#pwMsg').textContent = '';
+      try { await API.passwordSignIn(f.username.value.trim(), f.password.value); start(); }
+      catch (err) { $('#pwMsg').textContent = err.message; $('#pwMsg').style.color = 'var(--danger-ink)'; btn.disabled = false; btn.textContent = 'Sign in'; }
+    };
+    if (!google) return;
     const init = () => {
-      if (!window.google || !google.accounts) return setTimeout(init, 200);
-      google.accounts.id.initialize({ client_id: CFG.CLIENT_ID, callback: r => { API.signIn(r.credential); start(); }, auto_select: true });
+      if (!window.google || !window.google.accounts) return setTimeout(init, 200);
+      window.google.accounts.id.initialize({ client_id: CFG.CLIENT_ID, callback: r => { API.signIn(r.credential); start(); } });
       $('#gbtn').innerHTML = '';
-      google.accounts.id.renderButton($('#gbtn'), { theme: 'outline', size: 'large', shape: 'pill', text: 'signin_with', width: 300 });
-      google.accounts.id.prompt();
+      window.google.accounts.id.renderButton($('#gbtn'), { theme: 'outline', size: 'large', shape: 'pill', text: 'signin_with', width: 300 });
     };
     init();
   }

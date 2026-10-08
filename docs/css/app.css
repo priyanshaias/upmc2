@@ -237,6 +237,9 @@ main { max-width: var(--container); margin: 0 auto; padding: 28px 20px 120px; }
 .form { display: grid; gap: 14px; margin-top: 18px; text-align: left; }
 .form label { font-size: 13px; font-weight: 700; color: var(--text-strong); display: grid; gap: 6px; }
 .form input { min-height: var(--tap); border: 1.5px solid var(--border); border-radius: var(--radius-9); padding: 0 12px; font-size: 15px; }
+.form .pw { position: relative; display: block; }
+.form .pw input { width: 100%; padding-right: 70px; }
+.form .pw .btn { position: absolute; right: 4px; top: 4px; }
 .form input:focus { border-color: var(--primary); outline: none; box-shadow: 0 0 0 3px var(--primary-soft); }
 
 /* ---------- admin ---------- */
