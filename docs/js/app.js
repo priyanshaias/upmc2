@@ -160,12 +160,38 @@
     if (!location.hash || location.hash === '#/') go('#/circles'); else route();
   }
 
+  // Circle/division counts are remembered on this device, so the first screen opens instantly;
+  // fresh numbers are fetched in the background and the screen updates quietly.
+  const metaKey = () => 'upmc_meta_' + ((API.user || {}).email || '');
+  let metaFetch = null;
+  function fetchMeta() {
+    if (!metaFetch) metaFetch = guard(() => API.call('meta')).then(m => {
+      S.meta = m; metaFetch = null;
+      if (m.user) API.setAdmin(!!m.user.isAdmin);
+      try { if (!API.DEMO) localStorage.setItem(metaKey(), JSON.stringify(m)); } catch (e) {}
+      renderWho(); return m;
+    }, e => { metaFetch = null; throw e; });
+    return metaFetch;
+  }
   async function ensureMeta(force) {
     if (S.meta && !force && !S.meta.stale) return S.meta;
-    S.meta = await guard(() => API.call('meta'));
-    if (S.meta.user) API.setAdmin(!!S.meta.user.isAdmin);
-    renderWho();
-    return S.meta;
+    if (!S.meta && !force && !API.DEMO) {
+      let cached = null; try { cached = JSON.parse(localStorage.getItem(metaKey()) || 'null'); } catch (e) {}
+      if (cached && cached.circles) {
+        S.meta = Object.assign(cached, { fromCache: true });
+        fetchMeta().then(refreshTiles).catch(() => {});
+        renderWho(); return S.meta;
+      }
+    }
+    return fetchMeta();
+  }
+  function refreshTiles() {
+    const parts = location.hash.replace(/^#\/?/, '').split('/').map(decodeURIComponent), box = app.querySelector('.tiles');
+    if (!box || !S.meta || !['', 'circles', 'c'].includes(parts[0])) return;
+    if (parts[0] === 'c' && parts[1]) {
+      const c = S.meta.circles.find(x => x.circle === parts[1]);
+      if (c) box.innerHTML = c.divisions.map((d, i) => tile(d, 'Division', countFor(parts[1], d), `#/d/${encodeURIComponent(parts[1])}/${encodeURIComponent(d)}`, i)).join('');
+    } else box.innerHTML = S.meta.circles.map((c, i) => tile(c.circle, c.office, countFor(c.circle), `#/c/${encodeURIComponent(c.circle)}`, i)).join('');
   }
 
   /* ---------------- circles & divisions ---------------- */
@@ -210,10 +236,16 @@
       ${loaderHtml('division', `Fetching the officers of ${division}…`)}
       <div class="cards">${'<div class="skeleton"></div>'.repeat(9)}</div>`;
     animateLoader(app);
+    // a division opened earlier in this browser tab shows instantly, then refreshes
+    const key = 'upmc_div_' + circle + '|' + division;
+    let shown = false;
+    try { const c = JSON.parse(sessionStorage.getItem(key) || 'null'); if (c) { S.div = { circle, division, officers: c.officers, schema: c.schema }; S.filter = 'all'; S.cadre = 'all'; S.q = ''; drawDivision(); shown = true; } } catch (e) {}
     await ensureMeta();
     const d = await guard(() => API.call('division', { circle, division }));
+    try { sessionStorage.setItem(key, JSON.stringify(d)); } catch (e) {}
+    if (shown && (S.open || location.hash !== `#/d/${encodeURIComponent(circle)}/${encodeURIComponent(division)}`)) return;
     S.div = { circle, division, officers: d.officers, schema: d.schema };
-    S.filter = 'all'; S.cadre = 'all'; S.q = '';
+    if (!shown) { S.filter = 'all'; S.cadre = 'all'; S.q = ''; }
     drawDivision();
   }
 

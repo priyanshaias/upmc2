@@ -238,7 +238,7 @@ function buildAll_() {
     });
   });
   Object.keys(divs).forEach(k => counts[k.slice(4)] = countsOf_(divs[k]));
-  const meta = { circles: lists.circles, districts: lists.districts, status: lists.status, counts, builtAt: now_(),
+  const meta = { circles: lists.circles, districts: lists.districts, status: lists.status, counts, builtAt: now_(), builtMs: Date.now(),
     cadres: Object.keys(CADRES).map(k => ({ code: k, label: CADRES[k].label, designations: CADRES[k].designations })) };
   const put = { meta, schema }; Object.keys(divs).forEach(k => put[k] = divs[k]);
   cput_(put);
@@ -462,7 +462,16 @@ function mark_(sh, row, lc, status, whenTxt, note) {
   if (note) sh.getRange(row, lc('Review Note')).setValue(note);
 }
 
-/** Run once from the editor to authorise (Sheets + external fetch) and check the sheet. */
+/**
+ * Keeps the app fast. Add a time-driven trigger for this function (every 10 minutes):
+ * it keeps Google's server for this script awake and re-reads the sheet before the cache expires (every 5 hours).
+ */
+function keepWarm() {
+  const m = cget_('meta');
+  if (!m || !m.builtMs || Date.now() - m.builtMs > 5 * 3600 * 1000) buildAll_();
+}
+
+/** Run once from the editor to authorise and check the sheet. */
 function setup() {
   Logger.log('Sheet: ' + ss_().getName());
   readLists_(); logSheet_();

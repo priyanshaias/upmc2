@@ -11,12 +11,25 @@
   }
 
 
+  // Reads are retried automatically when Google's servers hiccup (slow start, temporary 404/500, non-JSON page).
+  // Writes are sent once, so a slow reply can never create a duplicate change.
+  const SAFE = ['login', 'logout', 'meta', 'division', 'adminData', 'adminSummary', 'adminChanges'];
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
   async function post(payload) {
-    let res;
-    try {
-      res = await fetch(cfg.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) });
-    } catch (e) { throw new Error('No internet connection, or the server could not be reached. Please try again.'); }
-    return res.json().catch(() => ({ ok: false, error: 'The server sent an unexpected reply.' }));
+    const tries = SAFE.includes(payload.action) ? 3 : 1;
+    let last = 'The server could not be reached. Please check the internet connection and try again.';
+    for (let i = 0; i < tries; i++) {
+      if (i) await sleep(1500 * i);
+      const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 60000);
+      try {
+        const res = await fetch(cfg.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload), signal: ctl.signal });
+        const txt = await res.text();
+        try { return JSON.parse(txt); } catch (e) { last = 'Google’s server is busy. Please try again in a minute.'; }
+      } catch (e) {
+        last = e.name === 'AbortError' ? 'Google’s server is taking too long. Please try again in a minute.' : last;
+      } finally { clearTimeout(t); }
+    }
+    return { ok: false, error: last };
   }
 
   async function call(action, body = {}) {
