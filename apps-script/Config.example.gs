@@ -1,5 +1,6 @@
 // TEMPLATE. Copy to Config.local.gs (kept out of GitHub), fill in, and paste it into Apps Script as a second file.
 const LOCAL_CONFIG = {
+  SHEET_ID: '',                          // the ID from the Sheet's URL: .../spreadsheets/d/<THIS PART>/edit
   ACCOUNTS: {                            // role 'operator' or 'admin'
     // username: { role: 'operator', name: 'Field operator', salt: '<random>', hash: '<sha256(salt + password)>' },
   },

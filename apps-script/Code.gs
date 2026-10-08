@@ -31,7 +31,7 @@ const MAX_FAILS = 5, LOCK_MIN = 15;
 /** Private settings from Config.local.gs (read lazily so file order does not matter). */
 function local_() {
   const L = (typeof LOCAL_CONFIG !== 'undefined') ? LOCAL_CONFIG : {};
-  return { accounts: L.ACCOUNTS || {} };
+  return { accounts: L.ACCOUNTS || {}, sheetId: L.SHEET_ID || '' };
 }
 
 /* ============================================================ HTTP */
@@ -103,7 +103,13 @@ function authenticate_(token) {
 
 /* ============================================================ sheet helpers */
 
-function ss_() { return SpreadsheetApp.getActiveSpreadsheet(); }
+/** The Unified PMC sheet: by ID (standalone script) or the sheet this script is attached to. */
+function ss_() {
+  const id = local_().sheetId;
+  const ss = id ? SpreadsheetApp.openById(id) : SpreadsheetApp.getActiveSpreadsheet();
+  if (!ss) throw new Error('No spreadsheet. Put SHEET_ID in Config.local.gs.');
+  return ss;
+}
 function sheet_(name) {
   const sh = ss_().getSheetByName(name);
   if (!sh) throw new Error('Sheet "' + name + '" not found.');
@@ -384,6 +390,7 @@ function mark_(sh, row, lc, status, whenTxt, note) {
 
 /** Run once from the editor to authorise (Sheets + external fetch) and check the sheet. */
 function setup() {
+  Logger.log('Sheet: ' + ss_().getName());
   readLists_(); logSheet_();
   Object.keys(CADRES).forEach(c => Logger.log(c + ': ' + readSheet_(c).rows.length + ' officers'));
   const L = local_();

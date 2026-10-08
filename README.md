@@ -16,15 +16,13 @@ GitHub Pages (docs/)  ──►  Apps Script API (apps-script/Code.gs)  ──�
 
 ## Setup (once)
 
-### 1. Apps Script API
-1. Open the Unified PMC Google Sheet and go to **Extensions → Apps Script**. This is a new script project; it can sit alongside the old one.
-2. Replace `Code.gs` with `apps-script/Code.gs`.
-3. Click **+ → Script** and name the new file `Config.local`. Paste in the private `apps-script/Config.local.gs`, which exists only on your computer; `Config.example.gs` is the blank template. The password accounts are already filled in.
-4. In Project Settings, tick **Show appsscript.json**, then replace it with `apps-script/appsscript.json`.
-5. Run the function **setup** once.
-   - Allow the permission it asks for (access to this spreadsheet).
-   - The log should list the officer counts and the password users.
-6. Go to **Deploy → New deployment → Web app**, and set **Execute as: Me** and **Who has access: Anyone**. Copy the URL that ends in `/exec`.
+### 1. Apps Script API (its own project, separate from any other script)
+1. Go to https://script.google.com, signed in as the account that owns the Unified PMC Google Sheet. Click **New project** and rename it `UPMC2 API`.
+2. Replace the contents of `Code.gs` with `apps-script/Code.gs`.
+3. Click **+ → Script**, name it `Config.local`, and paste in the private `apps-script/Config.local.gs` from your computer (`Config.example.gs` is the blank template). Set `SHEET_ID` to the long ID in the Sheet's address (`docs.google.com/spreadsheets/d/<ID>/edit`).
+4. In **Project Settings (⚙)**, tick **Show "appsscript.json" manifest file in editor**, then replace it with `apps-script/appsscript.json`.
+5. Select the function **setup** and click **Run**. Allow the permission (Google Sheets); for "Google hasn't verified this app", click **Advanced → Go to UPMC2 API (unsafe)**. This is your own script. The log should show the Sheet name, the officer counts and the password users.
+6. Go to **Deploy → New deployment → ⚙ → Web app**, and set **Execute as: Me** and **Who has access: Anyone**. Copy the URL that ends in `/exec`.
 
 ### 2. Connect the website
 1. Put the `/exec` URL in `docs/js/config.js`:
