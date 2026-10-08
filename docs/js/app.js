@@ -16,6 +16,7 @@
   const STATUS_TXT = { verified: 'Verified', pending: 'Awaiting approval', unverified: 'Not verified' };
 
   /* ---------------- small helpers ---------------- */
+  const HELP = { name: 'Sudipta Kundu', office: 'Aranya Bhawan', phone: '+91 70442 30806', tel: '+917044230806' };
   function toast(msg, err) { const t = $('#toast'); t.textContent = msg; t.className = 'toast on' + (err ? ' err' : ''); clearTimeout(t._t); t._t = setTimeout(() => t.className = 'toast', 3800); }
   /* ---------- loading animation: a tree that draws itself, a moving bar, rotating messages and tips ---------- */
   const TREE = `<svg class="tree" viewBox="0 0 64 64" aria-hidden="true">
@@ -42,7 +43,8 @@
       <div class="ibar"><i></i></div>
       <p class="ld-step">${esc(STEPS[kind][1] || '')}</p>
       <p class="ld-tip">${esc(TIPS[Math.floor(Math.random() * TIPS.length)])}</p>
-      <p class="ld-slow faint"></p></div>`;
+      <p class="ld-slow faint"></p>
+      <p class="ld-help">Need help? ${HELP.name}, ${HELP.office} · <a href="tel:${HELP.tel}">${HELP.phone}</a> · <a href="#" data-help>How to use</a></p></div>`;
   }
   /** Rotates the messages of every .loader on screen; stops by itself when the loader is gone. */
   function animateLoader(root) {
@@ -108,6 +110,38 @@
     const m = $('#menu'); if (m && !e.target.closest('#menu')) { m.classList.add('hidden'); const b = $('#menuBtn'); b && b.setAttribute('aria-expanded', 'false'); }
   });
 
+  /* ---------------- help ---------------- */
+  const helpStrip = () => `<div class="help-strip"><span class="hq" aria-hidden="true">?</span>
+    <span>Need help? Contact <b>${HELP.name}</b>, ${HELP.office} · <a href="tel:${HELP.tel}">${HELP.phone}</a></span>
+    <button class="btn sm ghost" data-help>How to use</button></div>`;
+  function openHelp() {
+    if ($('#helpScrim')) return;
+    const el = document.createElement('div'); el.className = 'scrim'; el.id = 'helpScrim';
+    el.innerHTML = `<div class="dialog help-dlg" role="dialog" aria-modal="true" aria-label="Help">
+      <div class="dhead"><div class="initials FR">?</div><div><h2>Help</h2><div class="sub">How to use UPMC2, and whom to call</div></div>
+        <button class="x" id="helpClose" aria-label="Close">×</button></div>
+      <div class="dbody">
+        <div class="help-contact"><div><span class="faint">For any help, please contact</span><b>${HELP.name}</b><span>${HELP.office}</span></div>
+          <a class="btn primary" href="tel:${HELP.tel}">Call ${HELP.phone}</a></div>
+        <ol class="help-steps">
+          <li><b>Choose your circle, then your division.</b> The ring shows how much is verified.</li>
+          <li><b>Open each officer’s card.</b> Check the <b>Posting and home district</b> box first. It matters most.</li>
+          <li><b>All correct?</b> Press <b>Yes, verify · all correct</b>. A blue tick appears on the card.</li>
+          <li><b>Something wrong?</b> Press <b>Edit</b> next to that section, correct it and <b>Submit for approval</b>.</li>
+          <li><b>Officer missing?</b> Use the <b>Add a …</b> card at the end of each cadre. The administrator approves new officers.</li>
+          <li><b>Need a printout?</b> The download icon on a card gives that officer’s PDF. <b>Download all PDFs</b> gives the whole division.</li>
+        </ol>
+        <p class="faint">Your sign-in lasts 6 hours. The app works on phones and computers.</p>
+      </div></div>`;
+    document.body.appendChild(el);
+    const close = () => { el.classList.remove('on'); setTimeout(() => el.remove(), 250); };
+    el.addEventListener('click', e => { if (e.target === el) close(); });
+    el.querySelector('#helpClose').onclick = close;
+    document.addEventListener('keydown', function esc1(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', esc1); } });
+    requestAnimationFrame(() => el.classList.add('on'));
+  }
+  document.addEventListener('click', e => { if (e.target.closest('[data-help]')) { e.preventDefault(); openHelp(); } });
+
   /* ---------------- sign in & operator details ---------------- */
   function renderSignin() {
     app.innerHTML = `<section class="signin"><div class="card">
@@ -123,6 +157,7 @@
             <button class="btn primary" type="submit" id="pwBtn">Sign in</button>
             <div id="pwMsg" class="faint" role="alert"></div>
           </form>`}
+      ${helpStrip()}
     </div></section>`;
     if (API.DEMO) { $('#demoBtn').onclick = () => { API.demoSignIn(); start(); }; return; }
     $('#showPw').onclick = () => { const i = $('#pwForm').password; i.type = i.type === 'password' ? 'text' : 'password'; $('#showPw').textContent = i.type === 'password' ? 'Show' : 'Hide'; };
@@ -207,6 +242,7 @@
   }
   async function renderCircles() {
     app.innerHTML = `<div class="head"><div><h1 class="page-title">Choose your circle.</h1><p class="page-sub">Then pick your division to see its officers.</p></div></div>
+      ${helpStrip()}
       ${S.meta ? '' : loaderHtml('circles')}<div class="tiles">${'<div class="skeleton"></div>'.repeat(8)}</div>`;
     animateLoader(app);
     const m = await ensureMeta();
@@ -290,19 +326,25 @@
       <div class="top"><div class="initials ${o.cadre}">${esc(FL.initials(d.Name))}</div>
         <div><div class="nm">${esc(FL.cleanName(d.Name))}${o.status === 'verified' ? TICK : ''}</div><div class="id">HRMS ${esc(o.id)}</div></div></div>
       <div class="meta"><span class="tag">${esc(d.Designation || o.cadre)}</span> ${esc(rng + beat) || '<span class="faint">Range not recorded</span>'}</div>
-      <div class="foot"><span class="pill ${o.status}">${STATUS_TXT[o.status]}</span>${attn ? '<span class="pill attn">Needs attention</span>' : ''}</div>
+      <div class="foot">${o.isNew ? '<span class="pill pending">New · awaiting approval</span>' : `<span class="pill ${o.status}">${STATUS_TXT[o.status]}</span>${attn ? '<span class="pill attn">Needs attention</span>' : ''}`}</div>
     </div>`;
   }
+  const CADRE_ONE = { FR: 'Forest Ranger', DFR: 'Deputy Ranger / Forester', FG: 'Forest Guard / HFG' };
+  const addCard = c => `<button class="ocard addcard" data-add="${c}"><span class="plus" aria-hidden="true">+</span>
+      <b>Add a ${CADRE_ONE[c]}</b><small>Posted here but not in the list? Add the officer for approval.</small></button>`;
 
   function drawCards(flashId) {
     const vis = visible();
-    if (!vis.length) { $('#groups').innerHTML = `<div class="empty-state"><b>No officers here.</b>${S.div.officers.length ? 'Try another filter.' : 'No officers are recorded for this division.'}</div>`; return; }
+    const canAdd = S.filter === 'all' && !S.q.trim();          // add cards show on the unfiltered view
     let i = 0;
-    $('#groups').innerHTML = ['FR', 'DFR', 'FG'].map(c => {
-      const g = vis.filter(o => o.cadre === c);
-      return g.length ? `<div class="group-h"><h3>${CADRE_TXT[c]}</h3><span>${g.length}</span></div><div class="cards">${g.map(o => card(o, i++)).join('')}</div>` : '';
+    const html = ['FR', 'DFR', 'FG'].map(c => {
+      const g = vis.filter(o => o.cadre === c), show = canAdd && (S.cadre === 'all' || S.cadre === c);
+      if (!g.length && !show) return '';
+      return `<div class="group-h"><h3>${CADRE_TXT[c]}</h3><span>${g.length}</span></div><div class="cards">${g.map(o => card(o, i++)).join('')}${show ? addCard(c) : ''}</div>`;
     }).join('');
-    app.querySelectorAll('.ocard').forEach(b => {
+    $('#groups').innerHTML = html || `<div class="empty-state"><b>No officers here.</b>Try another filter.</div>`;
+    app.querySelectorAll('.addcard').forEach(b => b.onclick = () => openAdd(b.dataset.add));
+    app.querySelectorAll('.ocard:not(.addcard)').forEach(b => {
       b.onclick = e => { if (!e.target.closest('.dl')) openProfile(b.dataset.k); };
       b.onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === b) { e.preventDefault(); openProfile(b.dataset.k); } };
     });
@@ -317,7 +359,7 @@
   }
 
   /* ---------------- profile dialog ---------------- */
-  const findO = k => S.div.officers.find(o => o.cadre + '|' + o.id === k);
+  const findO = k => (k === '__add__' ? S.adding : S.div.officers.find(o => o.cadre + '|' + o.id === k));
   const editing = () => S.editSecs.size > 0;
 
   function openProfile(k) {
@@ -331,11 +373,12 @@
     requestAnimationFrame(() => el.classList.add('on'));
   }
   function closeProfile(force) {
-    if (!force && Object.keys(S.edits).length && !confirm('You have changes that are not submitted. Close anyway?')) return;
+    const typed = Object.keys(S.edits).filter(k => !(S.adding && k === 'Designation')).length;
+    if (!force && typed && !confirm(S.adding ? 'Discard this new officer?' : 'You have changes that are not submitted. Close anyway?')) return;
     const el = $('#scrim'); if (!el) return;
     el.classList.remove('on'); document.body.style.overflow = '';
     setTimeout(() => el.remove(), 250);
-    S.open = null; S.editSecs = new Set(); S.edits = {};
+    S.open = null; S.editSecs = new Set(); S.edits = {}; S.adding = null;
   }
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && S.open) closeProfile(); });
 
@@ -359,10 +402,41 @@
     return `<input ${a} value="${esc(cur)}">`;
   }
 
+  /* ----- add a new officer: the profile window in "new" mode, every section open for typing ----- */
+  const ADD_REQUIRED = ['Employee ID', 'Name', 'Present Range / Office', 'District in which Range lies', 'Home District'];
+  function openAdd(cadre) {
+    const des = (S.meta.cadres.find(c => c.code === cadre) || {}).designations || [cadre];
+    S.adding = { cadre, id: '__add__', isDraft: true, status: 'unverified', pending: [], data: { Circle: S.div.circle, Division: S.div.division, Designation: des[0] } };
+    openProfile('__add__');
+    S.editSecs = new Set(['identity', 'posting', 'personal', 'service', 'status']);
+    S.edits = { Designation: des[0] };
+    drawProfile();
+  }
+  async function submitAdd(o) {
+    const data = Object.assign({ Circle: S.div.circle, Division: S.div.division }, S.edits);
+    const miss = ADD_REQUIRED.filter(f => !String(data[f] || '').trim());
+    if (miss.length) { toast('Please fill: ' + miss.map(FL.label).join(', '), true); return; }
+    const b = busy('Sending the new officer for approval…', false, 'save');
+    try {
+      const r = await guard(() => API.call('addOfficer', { cadre: o.cadre, data, operator: op() }));
+      const nw = { cadre: o.cadre, id: r.id, data, isNew: true, status: 'pending', pending: [{ field: '(New officer)', value: 'New officer', by: (op() || {}).name, on: 'now' }] };
+      S.div.officers.push(nw);
+      try { sessionStorage.removeItem('upmc_div_' + S.div.circle + '|' + S.div.division); } catch (e) {}
+      b.done(); S.edits = {}; S.editSecs = new Set(); closeProfile(true); S.adding = null;
+      toast(`${FL.cleanName(data.Name)} sent for approval as a new ${CADRE_ONE[o.cadre]}.`);
+      drawDivision(nw.cadre + '|' + nw.id);
+    } catch (e) { b.done(); }
+  }
+
   function drawProfile() {
     const o = findO(S.open), d = o.data, schema = S.div.schema[o.cadre], types = {}; schema.forEach(f => types[f.name] = f.type);
+    if (o.isDraft) types['Employee ID'] = 'text';
     const t = FL.tenure(d), y = FL.fmtYears;
-    const secs = FL.sections(schema);
+    let secs = FL.sections(schema);
+    if (o.isDraft) {
+      secs = secs.filter(x => x.id !== 'reference').map(x => Object.assign({}, x, { fields: x.fields.filter(f => !['Name', 'Designation', 'Circle', 'Division'].includes(f)) }));
+      secs.unshift({ id: 'identity', title: 'Officer', fields: ['Employee ID', 'Name', 'Designation'] });
+    }
     const attn = [];
     if (d['Posting List Match'] === 'Not present in posting list') attn.push('Not found in the posting list of 29.08.2026. Please confirm the present posting.');
     if (!d['Home District']) attn.push('Home district is not recorded.');
@@ -371,13 +445,14 @@
     const dlg = $('#scrim .dialog');
     const keepScroll = dlg.querySelector('.dbody') ? dlg.querySelector('.dbody').scrollTop : 0;
     const secHtml = s => {
-      const on = S.editSecs.has(s.id), urgent = s.id === 'posting', canEdit = s.id !== 'reference';
-      const rows = s.fields.map(f => `<div class="row${['Remarks', 'Posting List Remarks', 'Remarks in Gradation List'].includes(f) ? ' full' : ''}${S.edits.hasOwnProperty(f) ? ' chg' : ''}">
-          <div class="k">${esc(FL.label(f))}</div>${on ? inputHtml(o, f, types[f]) : valueHtml(o, f)}</div>`).join('');
+      const on = S.editSecs.has(s.id), urgent = s.id === 'posting', canEdit = s.id !== 'reference' && !o.isNew && !o.isDraft;
+      const req = f => o.isDraft && ADD_REQUIRED.includes(f) ? ' <span class="req">*</span>' : '';
+      const rows = s.fields.map(f => `<div class="row${['Remarks', 'Posting List Remarks', 'Remarks in Gradation List'].includes(f) ? ' full' : ''}${S.edits.hasOwnProperty(f) && !o.isDraft ? ' chg' : ''}">
+          <div class="k">${esc(FL.label(f))}${req(f)}</div>${on ? inputHtml(o, f, types[f]) : valueHtml(o, f)}</div>`).join('');
       return `<section class="sec${urgent ? ' urgent' : ''}${on ? ' editing' : ''}">
         <div class="sec-h"><h3>${esc(s.title)}</h3>${urgent ? '<span class="urgent-tag">Check first</span>' : ''}<span class="sp"></span>
           ${canEdit ? (on ? '<span class="editing-tag">Editing</span>' : `<button class="btn sm ghost sec-edit" data-sec="${s.id}">${icon.edit} Edit</button>`) : ''}</div>
-        ${urgent ? `${!on && attn.length ? `<div class="notice attn">${attn.map(esc).join('<br>')}</div>` : ''}
+        ${urgent && !o.isDraft ? `${!on && attn.length ? `<div class="notice attn">${attn.map(esc).join('<br>')}</div>` : ''}
           <div class="summary">
             <div><b>${y(t.posting)}</b><span>${t.postingLabel.toLowerCase()}</span></div>
             <div><b>${y(t.division)}</b><span>in present division</span></div>
@@ -386,6 +461,30 @@
           </div>` : ''}
         <div class="bio">${rows}</div></section>`;
     };
+    if (o.isDraft) {
+      const nm = S.edits.Name || '';
+      dlg.innerHTML = `
+      <div class="dhead"><div class="initials ${o.cadre} addav">${nm ? esc(FL.initials(nm)) : '+'}</div>
+        <div><h2>${nm ? esc(nm) : 'New ' + CADRE_ONE[o.cadre]}</h2>
+          <div class="sub">Adding to <b>${esc(S.div.division)}</b>, ${esc(S.div.circle)} circle</div></div>
+        <button class="x" id="dClose" aria-label="Close">×</button></div>
+      <div class="dbody">
+        <div class="notice info" style="margin-top:18px">Fill the officer’s details as on the service record. Fields marked * are needed. The officer is added after the administrator approves.</div>
+        ${secs.map(secHtml).join('')}
+      </div>
+      <div class="dfoot"><span class="ask">${ADD_REQUIRED.filter(f => !String(S.edits[f] || '').trim()).length ? 'Fill the fields marked *' : 'Ready to send'}</span><span class="sp"></span>
+        <button class="btn" id="cancelAdd">Cancel</button><button class="btn primary" id="submitAdd">${icon.send} Send for approval</button></div>`;
+      dlg.querySelector('.dbody').scrollTop = keepScroll;
+      $('#dClose').onclick = () => closeProfile();
+      $('#cancelAdd').onclick = () => closeProfile();
+      dlg.querySelectorAll('[data-f]').forEach(el => el.addEventListener('change', e => {
+        const f = e.target.dataset.f, val = types[f] === 'date' ? fromISO(e.target.value) : e.target.value.trim();
+        if (val) S.edits[f] = val; else delete S.edits[f];
+        drawProfile();
+      }));
+      $('#submitAdd').onclick = () => submitAdd(o);
+      return;
+    }
     dlg.innerHTML = `
       <div class="dhead"><div class="initials ${o.cadre}">${esc(FL.initials(d.Name))}</div>
         <div><h2>${esc(FL.cleanName(d.Name))}${o.status === 'verified' ? TICK : ''}</h2>
@@ -394,12 +493,14 @@
         <button class="x" id="dClose" aria-label="Close">×</button></div>
       <div class="dbody">
         ${editing() ? '<div class="notice info" style="margin-top:18px">Change only what is wrong. Your changes go to the administrator for approval.</div>' : ''}
-        ${!editing() && (o.pending || []).length ? `<div class="notice pend">${o.pending.length} change(s) sent earlier are waiting for approval.</div>` : ''}
+        ${o.isNew ? '<div class="notice pend">This officer was added by a division and is waiting for the administrator’s approval. It can be verified or edited after approval.</div>'
+          : (!editing() && (o.pending || []).length ? `<div class="notice pend">${o.pending.length} change(s) sent earlier are waiting for approval.</div>` : '')}
         ${secs.map(secHtml).join('')}
       </div>
       <div class="dfoot">${editing()
         ? `<span class="ask">${nChanged ? `${nChanged} field${nChanged > 1 ? 's' : ''} changed` : 'Make your changes above'}</span><span class="sp"></span>
            <button class="btn" id="cancelEdit">Cancel</button><button class="btn primary" id="submitEdit" ${nChanged ? '' : 'disabled'}>${icon.send} Submit for approval</button>`
+        : o.isNew ? `<span class="ask">Awaiting approval</span><span class="sp"></span><button class="btn" id="okClose">Close</button>`
         : `<span class="ask">Is everything correct?</span><span class="sp"></span>
            <button class="btn good" id="verBtn">${icon.check} Yes, verify · all correct</button>`}</div>`;
     dlg.querySelector('.dbody').scrollTop = keepScroll;
@@ -417,6 +518,8 @@
     if (editing()) {
       $('#cancelEdit').onclick = () => { if (!nChanged || confirm('Discard your changes?')) { S.editSecs = new Set(); S.edits = {}; drawProfile(); } };
       $('#submitEdit').onclick = () => submitEdits(o);
+    } else if (o.isNew) {
+      $('#okClose').onclick = () => closeProfile();
     } else {
       $('#verBtn').onclick = () => verify(o);
     }
@@ -478,6 +581,11 @@
     finally { b.done(); }
   }
 
+  function newOfficerHtml(json) {
+    let d = {}; try { d = JSON.parse(json); } catch (e) { return esc(json); }
+    return `<div class="newoff">${Object.entries(d).filter(([k]) => !['Circle', 'Division'].includes(k)).map(([k, v]) => `<span><em>${esc(FL.label(k))}</em> ${esc(v)}</span>`).join('')}</div>`;
+  }
+
   /* ---------------- admin ---------------- */
   async function renderAdmin(status) {
     await ensureMeta();
@@ -511,8 +619,8 @@
           <div style="flex:1;min-width:240px"><b style="color:var(--ink)">${esc(f.officer)}</b> <span class="faint">· ${esc(f.cadre)} · HRMS ${esc(f.id)} · ${esc(f.division)}, ${esc(f.circle)}</span>
             <div class="faint">Sent by ${esc(f.name)}${f.designation ? ', ' + esc(f.designation) : ''} · ${esc(f.email)} · ${esc(f.on)}</div></div>
           ${pend.length ? `<button class="btn sm" data-dec="reject" data-sid="${esc(sid)}">Reject</button><button class="btn sm primary" data-dec="approve" data-sid="${esc(sid)}">Approve ${pend.length}</button>` : ''}</div>
-          <table><tr><th>Field</th><th>Change</th><th>Status</th></tr>${g.map(x => `<tr><td>${esc(FL.label(x.field))}</td>
-            <td><span class="old">${esc(x.oldValue || '(blank)')}</span> → <span class="new">${esc(x.newValue || '(blank)')}</span>${x.conflict ? `<div class="conflict">The sheet now says “${esc(x.current || '(blank)')}”. It changed after this was sent.</div>` : ''}</td>
+          <table><tr><th>Field</th><th>Change</th><th>Status</th></tr>${g.map(x => `<tr><td>${x.type === 'Add' ? '<b>New officer</b>' : esc(FL.label(x.field))}</td>
+            <td>${x.type === 'Add' ? newOfficerHtml(x.newValue) : `<span class="old">${esc(x.oldValue || '(blank)')}</span> → <span class="new">${esc(x.newValue || '(blank)')}</span>`}${x.conflict ? `<div class="conflict">The sheet now says “${esc(x.current || '(blank)')}”. It changed after this was sent.</div>` : ''}</td>
             <td><span class="pill ${x.status === 'Approved' ? 'verified' : x.status === 'Rejected' ? 'attn' : 'pending'}">${esc(x.status)}</span></td></tr>`).join('')}</table></div>`;
       }).join('');
       app.querySelectorAll('[data-dec]').forEach(b => b.onclick = async () => {

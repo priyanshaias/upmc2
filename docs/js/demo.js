@@ -139,6 +139,16 @@
         rejected: log.filter(l => l.status === 'Rejected').length, verifiedToday: 0, byCadre: {} };
     }
     if (action === 'adminRefresh') return { builtAt: now(), divisions: 70 };
+    if (action === 'addOfficer') {
+      const d = body.data, list = officers(d.Circle, d.Division);
+      for (const k in store) if (store[k].some(o => o.id === d['Employee ID'])) throw new Error('HRMS ID ' + d['Employee ID'] + ' already belongs to another officer.');
+      const o = { cadre: body.cadre, id: d['Employee ID'], data: Object.assign({}, d), isNew: true, status: 'pending', pending: [{ field: '(New officer)', value: 'New officer', by: body.operator.name, on: now() }] };
+      list.push(o);
+      log.push({ changeId: Math.random().toString(16).slice(2, 10), submissionId: 'A-demo-' + Date.now(), on: now(), email: user.email, name: body.operator.name || user.name,
+        designation: body.operator.designation || '', mobile: '', cadre: body.cadre, type: 'Add', id: o.id, officer: d.Name, circle: d.Circle, division: d.Division,
+        field: '(New officer)', oldValue: '', newValue: JSON.stringify(d), status: 'Pending' });
+      return { submissionId: 'A-demo', id: o.id };
+    }
     if (action === 'adminData') {
       const officersOf = []; CIRCLES.forEach(c => c.divisions.forEach(d => officers(c.circle, d).forEach(o => { if (o.cadre === body.cadre) officersOf.push(o); })));
       const schema = {}; schema[body.cadre] = HEAD[body.cadre].map(h => ({ name: h, type: typeOf(h) }));
@@ -149,6 +159,7 @@
       let applied = 0, rejected = 0;
       log.filter(l => body.ids.includes(l.changeId) && l.status === 'Pending').forEach(l => {
         const o = find(l.cadre, l.id);
+        if (l.type === 'Add') { if (body.decision === 'approve') { o.isNew = false; o.pending = []; o.status = 'verified'; o.data.Verification = 'Verified - All correct'; applied++; l.status = 'Approved'; } else { l.status = 'Rejected'; rejected++; } return; }
         if (body.decision === 'approve') { o.data[l.field] = l.newValue; o.data['Last Updated By'] = l.name + ' · ' + l.email; o.data['Last Updated On'] = now(); l.status = 'Approved'; applied++; }
         else { l.status = 'Rejected'; rejected++; }
         o.pending = o.pending.filter(p => !(p.field === l.field && p.value === l.newValue));

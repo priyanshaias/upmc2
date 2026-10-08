@@ -48,7 +48,7 @@ function doPost(e) {
     if (body.action === 'logout') { logout_(body.token); return json_({ ok: true, data: {} }); }
     const user = authenticate_(body.token);
     const handlers = {
-      meta: meta_, division: division_, verify: verify_, submit: submit_,
+      meta: meta_, division: division_, verify: verify_, submit: submit_, addOfficer: addOfficer_,
       adminSummary: adminSummary_, adminChanges: adminChanges_, adminDecide: adminDecide_, adminRefresh: adminRefresh_, adminData: adminData_,
     };
     const fn = handlers[body.action];
@@ -237,6 +237,13 @@ function buildAll_() {
         status: p.length ? 'pending' : statusOf_(r, {}) });
     });
   });
+  readLog_().rows.forEach(l => {
+    if (l['Status'] !== 'Pending' || l['Type'] !== 'Add' || !CADRES[l['Cadre']]) return;
+    let data = {}; try { data = JSON.parse(l['New Value']); } catch (e) { return; }
+    const k = divKey_(data['Circle'], data['Division']);
+    (divs[k] = divs[k] || { officers: [] }).officers.push({ cadre: l['Cadre'], id: data[CONFIG.KEY], row: null, data, isNew: true,
+      pending: [{ field: '(New officer)', value: 'New officer', by: l['Submitter Name'], on: l['Submitted On'] }], status: 'pending' });
+  });
   Object.keys(divs).forEach(k => counts[k.slice(4)] = countsOf_(divs[k]));
   const meta = { circles: lists.circles, districts: lists.districts, status: lists.status, counts, builtAt: now_(), builtMs: Date.now(),
     cadres: Object.keys(CADRES).map(k => ({ code: k, label: CADRES[k].label, designations: CADRES[k].designations })) };
@@ -349,6 +356,43 @@ function submit_(body, user) {
   } finally { lock.releaseLock(); }
 }
 
+/** Proposes a new officer (not in the gradation list); added to the sheet when an admin approves. */
+function addOfficer_(body, user) {
+  const code = body.cadre; cadre_(code);
+  const meta = getMeta_(), lists = { circles: meta.circles, districts: meta.districts, status: meta.status };
+  const headers = (getSchema_()[code] || []).map(f => f.name);
+  const raw = body.data || {}, data = {};
+  const id = String(raw[CONFIG.KEY] || '').trim();
+  if (!/^[A-Za-z0-9-]{4,20}$/.test(id)) throw new Error('Enter a valid HRMS ID.');
+  if (!String(raw['Name'] || '').trim()) throw new Error('Enter the officer’s name.');
+  if (!raw['Circle'] || !raw['Division']) throw new Error('Circle and division are missing.');
+  headers.forEach(h => {
+    if (raw[h] === undefined || raw[h] === null || raw[h] === '') return;
+    if (h === CONFIG.KEY) { data[h] = id; return; }
+    if (typeOf_(h) === 'locked') return;
+    const v = clean_(code, h, raw[h], lists);
+    if (v) data[h] = v;
+  });
+  const lock = LockService.getScriptLock(); lock.waitLock(30000);
+  try {
+    // HRMS ID must be new: not in any cadre and not already proposed
+    const keys = Object.keys(meta.counts).map(k => 'div|' + k), got = CacheService.getScriptCache().getAll(keys);
+    const divs = Object.keys(got).length < keys.length ? buildAll_().divs : keys.reduce((a, k) => (a[k] = ungz_(got[k]), a), {});
+    Object.keys(divs).forEach(k => divs[k].officers.forEach(o => {
+      if (String(o.id) === id) throw new Error('HRMS ID ' + id + ' already belongs to ' + (o.data.Name || 'another officer') + ' (' + (o.data.Division || '') + (o.isNew ? ', awaiting approval' : '') + ').');
+    }));
+    const op = body.operator || {};
+    const sub = 'A' + Utilities.formatDate(new Date(), CONFIG.TZ, 'yyMMdd-HHmmss') + '-' + Math.floor(Math.random() * 900 + 100);
+    appendLog_([[id8_(), sub, now_(), user.email, op.name || user.name, op.designation || '', op.mobile || '', code, 'Add',
+      id, data['Name'], data['Circle'], data['Division'], '(New officer)', '', JSON.stringify(data), 'Pending', '', '']]);
+    const k = divKey_(data['Circle'], data['Division']), d = divs[k] || { officers: [] };
+    d.officers.push({ cadre: code, id, row: null, data, isNew: true, status: 'pending',
+      pending: [{ field: '(New officer)', value: 'New officer', by: op.name || user.name, on: now_() }] });
+    saveDiv_(data['Circle'], data['Division'], d);
+    return { submissionId: sub, id };
+  } finally { lock.releaseLock(); }
+}
+
 function clean_(code, field, v, lists) {
   v = String(v === null || v === undefined ? '' : v).trim();
   if (!v) return '';
@@ -394,7 +438,7 @@ function adminChanges_(body) {
       name: l['Submitter Name'], designation: l['Submitter Designation'], mobile: l['Submitter Mobile'], cadre: l['Cadre'],
       type: l['Type'], id: l['Employee ID'], officer: l['Name'], circle: l['Circle'], division: l['Division'],
       field: l['Field'], oldValue: l['Old Value'], newValue: l['New Value'], status: l['Status'], reviewedOn: l['Reviewed On'], note: l['Review Note'] };
-    if (CADRES[o.cadre]) {
+    if (CADRES[o.cadre] && o.type !== 'Add') {
       const rec = master(o.cadre).index[o.id];
       o.current = rec ? rec[o.field] : '(record missing)';
       o.conflict = o.status === 'Pending' && o.current !== o.oldValue;
@@ -414,6 +458,22 @@ function adminDecide_(body, user) {
     log.rows.filter(l => ids[l['Change ID']] && l['Status'] === 'Pending').forEach(l => {
       try {
         if (body.decision === 'reject') { mark_(lsh, l._row, lc, 'Rejected', whenTxt, body.note); res.rejected++; return; }
+        const by0 = l['Submitter Name'] + (l['Submitter Designation'] ? ' (' + l['Submitter Designation'] + ')' : '') + ' · ' + l['Submitted By (email)'];
+        if (l['Type'] === 'Add') {
+          const code = l['Cadre'], m = master(code), data = JSON.parse(l['New Value']);
+          if (m.index[data[CONFIG.KEY]]) throw new Error('HRMS ID ' + data[CONFIG.KEY] + ' is already in the sheet.');
+          const sh = sheet_(CADRES[code].sheet), row = sh.getLastRow() + 1;
+          const extra = { 'Verification': VERIFIED, 'Posting List Match': 'Added by division', 'Last Updated By': by0 };
+          const vals = m.headers.map(h => {
+            const v = data[h] !== undefined ? data[h] : (extra[h] || '');
+            return typeOf_(h) === 'date' && v ? parseDate_(v) : (h === 'Last Updated On' ? when : v);
+          });
+          const rg = sh.getRange(row, 1, 1, m.headers.length);
+          rg.setNumberFormats([m.headers.map(h => typeOf_(h) === 'date' ? 'dd-mm-yyyy' : (h === 'Last Updated On' ? 'dd-mm-yyyy hh:mm' : '@'))]).setValues([vals]);
+          const o = { _row: row }; m.headers.forEach(h => o[h] = data[h] || ''); m.index[data[CONFIG.KEY]] = o;
+          mark_(lsh, l._row, lc, 'Approved', whenTxt, body.note || ('Approved by ' + user.email));
+          res.applied++; return;
+        }
         const code = l['Cadre'], m = master(code), rec = m.index[l['Employee ID']];
         if (!rec) throw new Error('Officer not found ' + l['Employee ID']);
         if (rec[l['Field']] !== l['Old Value'] && !body.force) {
