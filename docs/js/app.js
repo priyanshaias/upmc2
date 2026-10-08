@@ -345,7 +345,7 @@
     if (mis.length && !confirm(`The ${mis.join(' and ')} ${mis.length > 1 ? 'are' : 'is'} not recorded.\n\nPress Cancel and use Edit to fill ${mis.length > 1 ? 'them' : 'it'}, or OK to verify anyway.`)) return;
     const b = busy('Saving verification…');
     try {
-      const r = await guard(() => API.call('verify', { cadre: o.cadre, id: o.id, operator: op() }));
+      const r = await guard(() => API.call('verify', { cadre: o.cadre, id: o.id, circle: S.div.circle, division: S.div.division, operator: op() }));
       Object.assign(o.data, { Verification: 'Verified - All correct', 'Last Updated By': r.verifiedBy, 'Last Updated On': r.verifiedOn });
       if (o.status !== 'pending') o.status = 'verified';
       bumpCounts(o, 'verified');
@@ -361,7 +361,7 @@
     if (!changes.some(c => c.field === 'Verification')) changes.push({ field: 'Verification', value: 'Corrected' });
     const b = busy('Sending for approval…');
     try {
-      const r = await guard(() => API.call('submit', { cadre: o.cadre, id: o.id, changes, operator: op() }));
+      const r = await guard(() => API.call('submit', { cadre: o.cadre, id: o.id, circle: S.div.circle, division: S.div.division, changes, operator: op() }));
       o.pending = (o.pending || []).concat(changes.map(c => ({ field: c.field, value: c.value, by: (op() || {}).name, on: 'now' })));
       o.status = 'pending'; bumpCounts(o, 'pending');
       b.done(); S.edits = {}; S.editSecs = new Set(); closeProfile(true);
@@ -400,12 +400,18 @@
     if (!S.meta.user || !S.meta.user.isAdmin) { app.innerHTML = '<div class="empty-state"><b>Approvals are for administrators.</b>Ask the PMC cell if you need access.</div>'; return; }
     status = status || 'Pending';
     app.innerHTML = `<div class="crumbs"><a href="#/circles">All circles</a><span class="sep">/</span><span>Approvals</span></div>
-      <div class="head"><div><h1 class="page-title">Approvals.</h1><p class="page-sub">Changes sent by divisions. Approved changes are written to the master sheet.</p></div></div>
+      <div class="head"><div><h1 class="page-title">Approvals.</h1><p class="page-sub">Changes sent by divisions. Approved changes are written to the master sheet.</p></div>
+        <span class="sp"></span><button class="btn" id="refreshData" title="Use after editing the Google Sheet by hand">↻ Refresh data from sheet</button></div>
       <div class="kpis" id="kpis">${'<div class="skeleton" style="height:76px"></div>'.repeat(4)}</div>
       <div class="toolbar"><div class="chips">${['Pending', 'Approved', 'Rejected', 'All'].map(s => `<button class="chip${s === status ? ' on' : ''}" data-s="${s}">${s}</button>`).join('')}</div>
         <label class="search">${icon.search}<input id="aq" placeholder="Search officer, operator or field"></label></div>
       <div id="alist"><div class="skeleton"></div></div>`;
     app.querySelectorAll('[data-s]').forEach(b => b.onclick = () => renderAdmin(b.dataset.s));
+    $('#refreshData').onclick = async () => {
+      const bz = busy('Reading the Google Sheet again… this can take up to a minute.');
+      try { const r = await guard(() => API.call('adminRefresh')); S.meta = null; toast(`Data refreshed (${r.divisions} divisions).`); }
+      catch (e) {} finally { bz.done(); }
+    };
     const [sum, rows] = await Promise.all([guard(() => API.call('adminSummary')), guard(() => API.call('adminChanges', { filter: { status } }))]);
     $('#kpis').innerHTML = [['Changes waiting', sum.pending], ['Submissions waiting', sum.submissions], ['Approved so far', sum.approved], ['Rejected so far', sum.rejected]]
       .map(([l, n]) => `<div class="kpi"><span>${l}</span><b>${n}</b></div>`).join('');

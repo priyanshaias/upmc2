@@ -49,7 +49,7 @@ function doPost(e) {
     const user = authenticate_(body.token);
     const handlers = {
       meta: meta_, division: division_, verify: verify_, submit: submit_,
-      adminSummary: adminSummary_, adminChanges: adminChanges_, adminDecide: adminDecide_,
+      adminSummary: adminSummary_, adminChanges: adminChanges_, adminDecide: adminDecide_, adminRefresh: adminRefresh_,
     };
     const fn = handlers[body.action];
     if (!fn) throw new Error('Unknown action: ' + body.action);
@@ -204,49 +204,95 @@ function stamp_(user, op) {
   return (op && op.name ? op.name : user.name) + (op && op.designation ? ' (' + op.designation + ')' : '') + ' · ' + user.email;
 }
 
-/* ============================================================ actions */
+/* ============================================================ cache
+ * Opening the sheet is slow (it holds many formulas), so the whole dataset is read once and kept,
+ * gzipped, in the script cache for up to 6 hours: 'meta', 'schema' and one 'div|<circle>|<division>' per division.
+ * Verify / submit update the cached copy in place; approvals and "Refresh data" rebuild it. */
 
-/** Circles → divisions with officer and verified counts (all cadres together). */
-function meta_(body, user) {
+const CACHE_TTL = 21600;
+function gz_(o) { return Utilities.base64Encode(Utilities.gzip(Utilities.newBlob(JSON.stringify(o), 'application/json')).getBytes()); }
+function ungz_(s) { return JSON.parse(Utilities.ungzip(Utilities.newBlob(Utilities.base64Decode(s), 'application/x-gzip')).getDataAsString()); }
+function cget_(k) { const v = CacheService.getScriptCache().get(k); return v ? ungz_(v) : null; }
+function cput_(obj) { const m = {}; Object.keys(obj).forEach(k => m[k] = gz_(obj[k])); CacheService.getScriptCache().putAll(m, CACHE_TTL); }
+const divKey_ = (c, d) => 'div|' + c + '|' + d;
+
+/** Reads everything once and fills the cache. Returns {meta, schema, divs}. */
+function buildAll_() {
   const lists = readLists_();
-  const pend = {};
-  readLog_().rows.forEach(l => { if (l['Status'] === 'Pending') pend[l['Cadre'] + '|' + l['Employee ID']] = true; });
-  const counts = {};
-  Object.keys(CADRES).forEach(code => {
-    readSheet_(code).rows.forEach(r => {
-      const k = r['Circle'] + '|' + r['Division'];
-      const c = counts[k] = counts[k] || { total: 0, verified: 0, pending: 0 };
-      c.total++;
-      if (pend[code + '|' + r[CONFIG.KEY]]) c.pending++;
-      else if (r['Verification'] === VERIFIED || r['Verification'] === 'Corrected') c.verified++;
-    });
-  });
-  return {
-    user, circles: lists.circles, districts: lists.districts, status: lists.status, counts,
-    cadres: Object.keys(CADRES).map(k => ({ code: k, label: CADRES[k].label, designations: CADRES[k].designations })),
-  };
-}
-
-/** All officers (all cadres) of one division, with field types and pending proposals. */
-function division_(body) {
   const pending = {};
   readLog_().rows.forEach(l => {
     if (l['Status'] !== 'Pending' || l['Type'] !== 'Edit') return;
     const k = l['Cadre'] + '|' + l['Employee ID'];
     (pending[k] = pending[k] || []).push({ field: l['Field'], value: l['New Value'], by: l['Submitter Name'], on: l['Submitted On'] });
   });
-  const out = { officers: [], schema: {} };
+  const schema = {}, divs = {}, counts = {};
   Object.keys(CADRES).forEach(code => {
     const m = readSheet_(code);
-    out.schema[code] = m.headers.map(h => ({ name: h, type: typeOf_(h) }));
-    m.rows.filter(r => r['Circle'] === body.circle && r['Division'] === body.division).forEach(r => {
+    schema[code] = m.headers.map(h => ({ name: h, type: typeOf_(h) }));
+    m.rows.forEach(r => {
+      const k = divKey_(r['Circle'], r['Division']);
       const o = Object.assign({}, r); delete o._row;
       const p = pending[code + '|' + r[CONFIG.KEY]] || [];
-      out.officers.push({ cadre: code, id: r[CONFIG.KEY], data: o, pending: p,
+      (divs[k] = divs[k] || { officers: [] }).officers.push({ cadre: code, id: r[CONFIG.KEY], row: r._row, data: o, pending: p,
         status: p.length ? 'pending' : statusOf_(r, {}) });
     });
   });
-  return out;
+  Object.keys(divs).forEach(k => counts[k.slice(4)] = countsOf_(divs[k]));
+  const meta = { circles: lists.circles, districts: lists.districts, status: lists.status, counts, builtAt: now_(),
+    cadres: Object.keys(CADRES).map(k => ({ code: k, label: CADRES[k].label, designations: CADRES[k].designations })) };
+  const put = { meta, schema }; Object.keys(divs).forEach(k => put[k] = divs[k]);
+  cput_(put);
+  return { meta, schema, divs };
+}
+function countsOf_(d) {
+  const c = { total: 0, verified: 0, pending: 0 };
+  d.officers.forEach(o => { c.total++; if (o.status === 'pending') c.pending++; else if (o.status === 'verified') c.verified++; });
+  return c;
+}
+function getMeta_() { return cget_('meta') || buildAll_().meta; }
+function getSchema_() { return cget_('schema') || buildAll_().schema; }
+function getDiv_(circle, division) {
+  const k = divKey_(circle, division), meta = getMeta_();
+  const known = meta.counts[circle + '|' + division];
+  if (!known || !known.total) return { officers: [] };
+  return cget_(k) || buildAll_().divs[k] || { officers: [] };
+}
+/** After a write: store the patched division and its new counts. */
+function saveDiv_(circle, division, d) {
+  const meta = cget_('meta');
+  const put = {}; put[divKey_(circle, division)] = d;
+  if (meta) { meta.counts[circle + '|' + division] = countsOf_(d); put.meta = meta; }
+  cput_(put);
+}
+/** Finds the officer's sheet row from the cache and re-reads just that row; falls back to a full read. */
+function locate_(code, id, circle, division) {
+  const sh = sheet_(CADRES[code].sheet);
+  const headers = (getSchema_()[code] || []).map(f => f.name);
+  const d = circle ? getDiv_(circle, division) : null;
+  const o = d && d.officers.find(x => x.cadre === code && x.id === id);
+  if (o && o.row && headers.length) {
+    const vals = sh.getRange(o.row, 1, 1, headers.length).getValues()[0];
+    const rec = { _row: o.row }; headers.forEach((h, i) => rec[h] = h === 'Last Updated On' ? fmtTs_(vals[i]) : fmt_(vals[i]));
+    if (rec[CONFIG.KEY] === id) return { sh, headers, rec, d, o };
+  }
+  const m = readSheet_(code), rec = m.index[id];     // sheet changed by hand: slow path + rebuild cache
+  if (!rec) throw new Error('Officer not found.');
+  buildAll_();
+  const d2 = getDiv_(rec['Circle'], rec['Division']);
+  return { sh, headers: m.headers, rec, d: d2, o: d2.officers.find(x => x.cadre === code && x.id === id) };
+}
+
+/* ============================================================ actions */
+
+/** Circles → divisions with officer and verified counts (all cadres together). */
+function meta_(body, user) {
+  return Object.assign({}, getMeta_(), { user });
+}
+
+/** All officers (all cadres) of one division, with field types and pending proposals. */
+function division_(body) {
+  const d = getDiv_(body.circle, body.division);
+  return { officers: d.officers.map(o => { const x = Object.assign({}, o); delete x.row; return x; }), schema: getSchema_() };
 }
 
 /** Marks an officer verified straight away (no approval needed). */
@@ -254,18 +300,21 @@ function verify_(body, user) {
   const code = body.cadre; cadre_(code);
   const lock = LockService.getScriptLock(); lock.waitLock(30000);
   try {
-    const m = readSheet_(code), rec = m.index[body.id];
-    if (!rec) throw new Error('Officer not found.');
-    const sh = sheet_(CADRES[code].sheet), col = h => m.headers.indexOf(h) + 1;
-    const by = stamp_(user, body.operator), when = new Date();
-    sh.getRange(rec._row, col('Verification')).setNumberFormat('@').setValue(VERIFIED);
-    sh.getRange(rec._row, col('Last Updated By')).setNumberFormat('@').setValue(by);
-    sh.getRange(rec._row, col('Last Updated On')).setNumberFormat('dd-mm-yyyy hh:mm').setValue(when);
+    const L = locate_(code, body.id, body.circle, body.division), rec = L.rec, col = h => L.headers.indexOf(h) + 1;
+    const by = stamp_(user, body.operator), when = new Date(), whenTxt = fmtTs_(when);
+    L.sh.getRange(rec._row, col('Verification')).setNumberFormat('@').setValue(VERIFIED);
+    L.sh.getRange(rec._row, col('Last Updated By')).setNumberFormat('@').setValue(by);
+    L.sh.getRange(rec._row, col('Last Updated On')).setNumberFormat('dd-mm-yyyy hh:mm').setValue(when);
     appendLog_([[id8_(), 'V' + Utilities.formatDate(when, CONFIG.TZ, 'yyMMdd-HHmmss'), now_(), user.email,
       (body.operator && body.operator.name) || user.name, (body.operator && body.operator.designation) || '', (body.operator && body.operator.mobile) || '',
       code, 'Verify', rec[CONFIG.KEY], rec['Name'], rec['Circle'], rec['Division'], 'Verification', rec['Verification'], VERIFIED,
       'Approved', now_(), 'Verified directly by operator']]);
-    return { verifiedBy: by, verifiedOn: fmtTs_(when) };
+    if (L.o) {
+      Object.assign(L.o.data, { Verification: VERIFIED, 'Last Updated By': by, 'Last Updated On': whenTxt });
+      if (!L.o.pending.length) L.o.status = 'verified';
+      saveDiv_(rec['Circle'], rec['Division'], L.d);
+    }
+    return { verifiedBy: by, verifiedOn: whenTxt };
   } finally { lock.releaseLock(); }
 }
 
@@ -274,16 +323,15 @@ function submit_(body, user) {
   const code = body.cadre; cadre_(code);
   const changes = body.changes || [];
   if (!changes.length) throw new Error('Nothing was changed.');
-  const lists = readLists_();
+  const meta = getMeta_(), lists = { circles: meta.circles, districts: meta.districts, status: meta.status };
   const lock = LockService.getScriptLock(); lock.waitLock(30000);
   try {
-    const m = readSheet_(code), rec = m.index[body.id];
-    if (!rec) throw new Error('Officer not found.');
+    const L = locate_(code, body.id, body.circle, body.division), rec = L.rec;
     const op = body.operator || {};
     const sub = 'S' + Utilities.formatDate(new Date(), CONFIG.TZ, 'yyMMdd-HHmmss') + '-' + Math.floor(Math.random() * 900 + 100);
     const rows = [];
     changes.forEach(ch => {
-      if (m.headers.indexOf(ch.field) < 0) throw new Error('Unknown field: ' + ch.field);
+      if (L.headers.indexOf(ch.field) < 0) throw new Error('Unknown field: ' + ch.field);
       if (typeOf_(ch.field) === 'locked') throw new Error(ch.field + ' cannot be changed.');
       const nv = clean_(code, ch.field, ch.value, lists);
       if (nv === rec[ch.field]) return;
@@ -292,6 +340,11 @@ function submit_(body, user) {
     });
     if (!rows.length) throw new Error('Nothing was changed.');
     appendLog_(rows);
+    if (L.o) {
+      rows.forEach(r => L.o.pending.push({ field: r[13], value: r[15], by: r[4], on: r[2] }));
+      L.o.status = 'pending';
+      saveDiv_(rec['Circle'], rec['Division'], L.d);
+    }
     return { submissionId: sub, count: rows.length };
   } finally { lock.releaseLock(); }
 }
@@ -378,9 +431,13 @@ function adminDecide_(body, user) {
         res.applied++;
       } catch (err) { res.errors.push(l['Change ID'] + ': ' + err.message); }
     });
+    buildAll_();
     return res;
   } finally { lock.releaseLock(); }
 }
+
+/** Admin: re-read the sheet now (use after editing the sheet by hand). */
+function adminRefresh_() { const all = buildAll_(); return { builtAt: all.meta.builtAt, divisions: Object.keys(all.divs).length }; }
 
 function mark_(sh, row, lc, status, whenTxt, note) {
   sh.getRange(row, lc('Status')).setValue(status);
@@ -392,6 +449,7 @@ function mark_(sh, row, lc, status, whenTxt, note) {
 function setup() {
   Logger.log('Sheet: ' + ss_().getName());
   readLists_(); logSheet_();
+  const all = buildAll_(); Logger.log('Cache ready: ' + Object.keys(all.divs).length + ' divisions');
   Object.keys(CADRES).forEach(c => Logger.log(c + ': ' + readSheet_(c).rows.length + ' officers'));
   const L = local_();
   Logger.log('Password users: ' + Object.keys(L.accounts).map(u => u + ' (' + L.accounts[u].role + ')').join(', '));

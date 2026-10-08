@@ -138,6 +138,7 @@
       return { pending: pend.length, submissions: new Set(pend.map(l => l.submissionId)).size, approved: log.filter(l => l.status === 'Approved').length,
         rejected: log.filter(l => l.status === 'Rejected').length, verifiedToday: 0, byCadre: {} };
     }
+    if (action === 'adminRefresh') return { builtAt: now(), divisions: 70 };
     if (action === 'adminChanges') { const f = body.filter || {}; return log.filter(l => !f.status || f.status === 'All' || l.status === f.status).slice().reverse(); }
     if (action === 'adminDecide') {
       let applied = 0, rejected = 0;
