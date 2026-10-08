@@ -326,7 +326,8 @@
       <div class="top"><div class="initials ${o.cadre}">${esc(FL.initials(d.Name))}</div>
         <div><div class="nm">${esc(FL.cleanName(d.Name))}${o.status === 'verified' ? TICK : ''}</div><div class="id">HRMS ${esc(o.id)}</div></div></div>
       <div class="meta"><span class="tag">${esc(d.Designation || o.cadre)}</span> ${esc(rng + beat) || '<span class="faint">Range not recorded</span>'}</div>
-      <div class="foot">${o.isNew ? '<span class="pill pending">New · awaiting approval</span>' : `<span class="pill ${o.status}">${STATUS_TXT[o.status]}</span>${attn ? '<span class="pill attn">Needs attention</span>' : ''}`}</div>
+      ${o.incoming ? `<div class="faint">From ${esc(o.from || '')}</div>` : ''}
+      <div class="foot">${o.incoming ? '<span class="pill pending">Transfer in · awaiting approval</span>' : o.isNew ? '<span class="pill pending">New · awaiting approval</span>' : `<span class="pill ${o.status}">${STATUS_TXT[o.status]}</span>${attn ? '<span class="pill attn">Needs attention</span>' : ''}`}</div>
     </div>`;
   }
   const CADRE_ONE = { FR: 'Forest Ranger', DFR: 'Deputy Ranger / Forester', FG: 'Forest Guard / HFG' };
@@ -343,7 +344,7 @@
       return `<div class="group-h"><h3>${CADRE_TXT[c]}</h3><span>${g.length}</span></div><div class="cards">${g.map(o => card(o, i++)).join('')}${show ? addCard(c) : ''}</div>`;
     }).join('');
     $('#groups').innerHTML = html || `<div class="empty-state"><b>No officers here.</b>Try another filter.</div>`;
-    app.querySelectorAll('.addcard').forEach(b => b.onclick = () => openAdd(b.dataset.add));
+    app.querySelectorAll('.addcard').forEach(b => b.onclick = () => openFinder(b.dataset.add));
     app.querySelectorAll('.ocard:not(.addcard)').forEach(b => {
       b.onclick = e => { if (!e.target.closest('.dl')) openProfile(b.dataset.k); };
       b.onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target === b) { e.preventDefault(); openProfile(b.dataset.k); } };
@@ -402,6 +403,102 @@
     return `<input ${a} value="${esc(cur)}">`;
   }
 
+  /* ----- before adding: search the whole register, offer a transfer if the officer is already listed ----- */
+  function smallDialog(id, html) {
+    const old = $('#' + id); if (old) old.remove();
+    const el = document.createElement('div'); el.className = 'scrim'; el.id = id;
+    el.innerHTML = `<div class="dialog" role="dialog" aria-modal="true">${html}</div>`;
+    document.body.appendChild(el); document.body.style.overflow = 'hidden';
+    const close = () => { el.classList.remove('on'); document.body.style.overflow = ''; setTimeout(() => el.remove(), 250); };
+    el.addEventListener('click', e => { if (e.target === el || e.target.closest('[data-close]')) close(); });
+    requestAnimationFrame(() => el.classList.add('on'));
+    return { el, close };
+  }
+  function openFinder(cadre) {
+    const one = CADRE_ONE[cadre];
+    const dlg = smallDialog('finder', `
+      <div class="dhead"><div class="initials ${cadre} addav">⌕</div>
+        <div><h2>Add a ${one}</h2><div class="sub">To <b>${esc(S.div.division)}</b>, ${esc(S.div.circle)} circle</div></div>
+        <button class="x" data-close aria-label="Close">×</button></div>
+      <div class="dbody">
+        <div class="notice info" style="margin-top:18px"><b>Step 1.</b> Check whether the officer is already in the register, for example listed in their old division. Search by HRMS ID or name.</div>
+        <form class="finder" id="fForm"><label class="search big">${icon.search}<input id="fQ" placeholder="HRMS ID or name" autocomplete="off" autofocus></label>
+          <button class="btn primary" type="submit">Search</button></form>
+        <div id="fRes" class="fres"><p class="faint">Results from all divisions appear here.</p></div>
+      </div>
+      <div class="dfoot"><span class="ask" id="fAsk">Search first</span><span class="sp"></span>
+        <button class="btn" data-close>Cancel</button><button class="btn" id="fNew" disabled>＋ Not found? Add as a new officer</button></div>`);
+    const res = dlg.el.querySelector('#fRes');
+    dlg.el.querySelector('#fForm').onsubmit = async e => {
+      e.preventDefault();
+      const q = dlg.el.querySelector('#fQ').value.trim();
+      if (q.length < 3) { res.innerHTML = '<p class="faint">Type at least 3 letters or digits.</p>'; return; }
+      res.innerHTML = '<div class="spinner"></div><p class="faint ctr">Searching all divisions…</p>';
+      try {
+        const r = await guard(() => API.call('search', { cadre, q }));
+        dlg.el.querySelector('#fNew').disabled = false;
+        dlg.el.querySelector('#fAsk').textContent = r.results.length ? 'Is one of these the officer?' : 'Not found in the register';
+        res.innerHTML = !r.results.length ? `<div class="empty-state small"><b>No ${one} matches “${esc(q)}”.</b>Try the HRMS ID or another spelling. If the officer is really not listed, add them as a new officer.</div>`
+          : r.results.map((x, i) => {
+            const here = x.circle === S.div.circle && x.division === S.div.division;
+            const act = here ? '<span class="pill verified">Already in this division</span>'
+              : x.pendingTransfer ? '<span class="pill pending">Transfer already requested</span>'
+              : x.isNew ? '<span class="pill pending">New · awaiting approval</span>'
+              : `<button class="btn sm primary" data-i="${i}">Bring to ${esc(S.div.division)}</button>`;
+            return `<div class="fitem"><div class="initials ${x.cadre}">${esc(FL.initials(x.name))}</div>
+              <div class="fi"><b>${esc(FL.cleanName(x.name))}</b><span class="faint">${esc(x.designation || x.cadre)} · HRMS ${esc(x.id)}</span>
+              <span>Now in <b>${esc(x.division)}</b>, ${esc(x.circle)}${x.range ? ' · ' + esc(x.range) : ''}</span></div>${act}</div>`;
+          }).join('') + (r.more ? `<p class="faint">${r.more} more match. Type more of the name to narrow down.</p>` : '');
+        res.querySelectorAll('[data-i]').forEach(b => b.onclick = () => { dlg.close(); setTimeout(() => openTransfer(r.results[+b.dataset.i]), 260); });
+      } catch (err) { res.innerHTML = `<p class="faint">${esc(err.message)}</p>`; }
+    };
+    dlg.el.querySelector('#fNew').onclick = () => { dlg.close(); setTimeout(() => openAdd(cadre), 260); };
+    setTimeout(() => { const i = dlg.el.querySelector('#fQ'); i && i.focus(); }, 300);
+  }
+  function openTransfer(x) {
+    const schema = (S.div.schema[x.cadre] || []).map(f => f.name), has = f => schema.includes(f);
+    const sinceF = x.cadre === 'DFR' ? 'Since when in this Beat' : 'Since when in this Range';
+    const crossCircle = x.circle !== S.div.circle;
+    const districts = (S.meta.districts || []).map(d => `<option>${esc(d)}</option>`).join('');
+    const fields = [
+      ['Present Range / Office', 'Range / office in ' + S.div.division, 'text', true],
+      ['District in which Range lies', 'District of that range', 'district', true],
+      has('Present Beat') ? ['Present Beat', 'Beat', 'text', x.cadre === 'DFR'] : null,
+      [sinceF, x.cadre === 'DFR' ? 'Since when in this beat' : 'Since when in this range', 'date', true],
+      ['Division Date', 'Date of joining ' + S.div.division, 'date', true],
+      crossCircle ? ['Circle Date', 'Date of joining ' + S.div.circle + ' circle', 'date', true] : null,
+      ['Remarks', 'Remarks (order no., date etc.)', 'longtext', false],
+    ].filter(Boolean);
+    const dlg = smallDialog('transfer', `
+      <div class="dhead"><div class="initials ${x.cadre}">${esc(FL.initials(x.name))}</div>
+        <div><h2>${esc(FL.cleanName(x.name))}</h2><div class="sub">${esc(x.designation || x.cadre)} · HRMS ${esc(x.id)}</div>
+          <div class="tr-route"><span>${esc(x.division)}<small>${esc(x.circle)}</small></span><b aria-hidden="true">→</b><span class="to">${esc(S.div.division)}<small>${esc(S.div.circle)}</small></span></div></div>
+        <button class="x" data-close aria-label="Close">×</button></div>
+      <div class="dbody"><div class="notice info" style="margin-top:18px"><b>Step 2.</b> Request the transfer. The officer moves to ${esc(S.div.division)} after the administrator approves.</div>
+        <div class="bio">${fields.map(([f, l, t, req]) => `<div class="row${t === 'longtext' ? ' full' : ''}"><div class="k">${esc(l)}${req ? ' <span class="req">*</span>' : ''}</div>${
+          t === 'date' ? `<input type="date" data-t="${esc(f)}" data-req="${req ? 1 : ''}">` : t === 'district' ? `<select data-t="${esc(f)}" data-req="1"><option value="">Choose…</option>${districts}</select>`
+          : t === 'longtext' ? `<textarea data-t="${esc(f)}"></textarea>` : `<input data-t="${esc(f)}" data-req="${req ? 1 : ''}">`}</div>`).join('')}</div></div>
+      <div class="dfoot"><span class="ask">Fields marked * are needed</span><span class="sp"></span><button class="btn" data-close>Cancel</button>
+        <button class="btn primary" id="trGo">${icon.send} Request transfer</button></div>`);
+    dlg.el.querySelector('#trGo').onclick = async () => {
+      const vals = {}; let miss = [];
+      dlg.el.querySelectorAll('[data-t]').forEach(el => { const f = el.dataset.t, v = el.type === 'date' ? fromISO(el.value) : el.value.trim(); if (v) vals[f] = v; else if (el.dataset.req) miss.push(el.closest('.row').querySelector('.k').textContent.replace('*', '').trim()); });
+      if (miss.length) { toast('Please fill: ' + miss.join(', '), true); return; }
+      const changes = [{ field: 'Division', value: S.div.division }].concat(crossCircle ? [{ field: 'Circle', value: S.div.circle }] : [])
+        .concat(Object.entries(vals).map(([field, value]) => ({ field, value }))).concat([{ field: 'Verification', value: 'Corrected' }]);
+      const b = busy('Sending the transfer for approval…', false, 'save');
+      try {
+        await guard(() => API.call('submit', { cadre: x.cadre, id: x.id, circle: x.circle, division: x.division, changes, operator: op() }));
+        const data = Object.assign({ Name: x.name, Designation: x.designation, 'Employee ID': x.id, Circle: S.div.circle, Division: S.div.division }, vals);
+        S.div.officers.push({ cadre: x.cadre, id: x.id, incoming: true, from: x.circle + ' / ' + x.division, status: 'pending', data, pending: changes.map(c => ({ field: c.field, value: c.value })) });
+        try { sessionStorage.removeItem('upmc_div_' + S.div.circle + '|' + S.div.division); sessionStorage.removeItem('upmc_div_' + x.circle + '|' + x.division); } catch (e) {}
+        if (S.meta) S.meta.stale = true;
+        b.done(); dlg.close(); toast(`Transfer of ${FL.cleanName(x.name)} sent for approval.`);
+        drawDivision(x.cadre + '|' + x.id);
+      } catch (e) { b.done(); }
+    };
+  }
+
   /* ----- add a new officer: the profile window in "new" mode, every section open for typing ----- */
   const ADD_REQUIRED = ['Employee ID', 'Name', 'Present Range / Office', 'District in which Range lies', 'Home District'];
   function openAdd(cadre) {
@@ -445,7 +542,7 @@
     const dlg = $('#scrim .dialog');
     const keepScroll = dlg.querySelector('.dbody') ? dlg.querySelector('.dbody').scrollTop : 0;
     const secHtml = s => {
-      const on = S.editSecs.has(s.id), urgent = s.id === 'posting', canEdit = s.id !== 'reference' && !o.isNew && !o.isDraft;
+      const on = S.editSecs.has(s.id), urgent = s.id === 'posting', canEdit = s.id !== 'reference' && !o.isNew && !o.isDraft && !o.incoming;
       const req = f => o.isDraft && ADD_REQUIRED.includes(f) ? ' <span class="req">*</span>' : '';
       const rows = s.fields.map(f => `<div class="row${['Remarks', 'Posting List Remarks', 'Remarks in Gradation List'].includes(f) ? ' full' : ''}${S.edits.hasOwnProperty(f) && !o.isDraft ? ' chg' : ''}">
           <div class="k">${esc(FL.label(f))}${req(f)}</div>${on ? inputHtml(o, f, types[f]) : valueHtml(o, f)}</div>`).join('');
@@ -492,15 +589,16 @@
           <div class="pills"><span class="pill ${o.status}">${STATUS_TXT[o.status]}</span>${d['Last Updated By'] && o.status === 'verified' ? `<span class="faint" style="align-self:center">by ${esc(d['Last Updated By'].split(' · ')[0])} on ${esc(d['Last Updated On'])}</span>` : ''}</div></div>
         <button class="x" id="dClose" aria-label="Close">×</button></div>
       <div class="dbody">
-        ${editing() ? '<div class="notice info" style="margin-top:18px">Change only what is wrong. Your changes go to the administrator for approval.</div>' : ''}
-        ${o.isNew ? '<div class="notice pend">This officer was added by a division and is waiting for the administrator’s approval. It can be verified or edited after approval.</div>'
+        ${editing() ? `<div class="notice info" style="margin-top:18px">Change only what is wrong. Your changes go to the administrator for approval.${S.edits.Division && S.edits.Division !== d.Division ? '<br><b>This is a transfer.</b> Also enter the date of joining the new division (Division date)' + (S.edits.Circle && S.edits.Circle !== d.Circle ? ' and the new circle (Circle date)' : '') + '.' : ''}</div>` : ''}
+        ${o.incoming ? `<div class="notice pend">Transfer from ${esc(o.from || 'another division')} has been requested and is waiting for the administrator’s approval. The details below are the proposed ones.</div>`
+          : o.isNew ? '<div class="notice pend">This officer was added by a division and is waiting for the administrator’s approval. It can be verified or edited after approval.</div>'
           : (!editing() && (o.pending || []).length ? `<div class="notice pend">${o.pending.length} change(s) sent earlier are waiting for approval.</div>` : '')}
         ${secs.map(secHtml).join('')}
       </div>
       <div class="dfoot">${editing()
         ? `<span class="ask">${nChanged ? `${nChanged} field${nChanged > 1 ? 's' : ''} changed` : 'Make your changes above'}</span><span class="sp"></span>
            <button class="btn" id="cancelEdit">Cancel</button><button class="btn primary" id="submitEdit" ${nChanged ? '' : 'disabled'}>${icon.send} Submit for approval</button>`
-        : o.isNew ? `<span class="ask">Awaiting approval</span><span class="sp"></span><button class="btn" id="okClose">Close</button>`
+        : (o.isNew || o.incoming) ? `<span class="ask">Awaiting approval</span><span class="sp"></span><button class="btn" id="okClose">Close</button>`
         : `<span class="ask">Is everything correct?</span><span class="sp"></span>
            <button class="btn good" id="verBtn">${icon.check} Yes, verify · all correct</button>`}</div>`;
     dlg.querySelector('.dbody').scrollTop = keepScroll;
@@ -518,7 +616,7 @@
     if (editing()) {
       $('#cancelEdit').onclick = () => { if (!nChanged || confirm('Discard your changes?')) { S.editSecs = new Set(); S.edits = {}; drawProfile(); } };
       $('#submitEdit').onclick = () => submitEdits(o);
-    } else if (o.isNew) {
+    } else if (o.isNew || o.incoming) {
       $('#okClose').onclick = () => closeProfile();
     } else {
       $('#verBtn').onclick = () => verify(o);
@@ -545,6 +643,11 @@
   async function submitEdits(o) {
     const changes = Object.entries(S.edits).map(([field, value]) => ({ field, value }));
     if (!changes.length) return;
+    if (S.edits.Division !== undefined && S.edits.Division !== o.data.Division) {
+      if (!S.edits.Division) { toast('Choose the new division.', true); return; }
+      if (!S.edits['Division Date']) { toast('This is a transfer: enter the date of joining the new division (Division date).', true); return; }
+      if (S.edits.Circle && S.edits.Circle !== o.data.Circle && !S.edits['Circle Date']) { toast('This is a transfer to another circle: enter the Circle date too.', true); return; }
+    }
     if (!changes.some(c => c.field === 'Verification')) changes.push({ field: 'Verification', value: 'Corrected' });
     const b = busy('Sending for approval…', false, 'save');
     try {
@@ -615,8 +718,10 @@
       const subs = {}; list.forEach(x => (subs[x.submissionId] = subs[x.submissionId] || []).push(x));
       $('#alist').innerHTML = Object.entries(subs).map(([sid, g]) => {
         const f = g[0], pend = g.filter(x => x.status === 'Pending');
+        const dv = g.find(x => x.field === 'Division'), cc = g.find(x => x.field === 'Circle');
+        const transfer = dv && dv.oldValue !== dv.newValue ? `<span class="pill attn">Transfer: ${esc(dv.oldValue)} → ${esc(dv.newValue)}${cc ? ` (${esc(cc.oldValue)} → ${esc(cc.newValue)})` : ''}</span>` : '';
         return `<div class="subm"><div class="sh">
-          <div style="flex:1;min-width:240px"><b style="color:var(--ink)">${esc(f.officer)}</b> <span class="faint">· ${esc(f.cadre)} · HRMS ${esc(f.id)} · ${esc(f.division)}, ${esc(f.circle)}</span>
+          <div style="flex:1;min-width:240px">${transfer ? transfer + '<br>' : ''}<b style="color:var(--ink)">${esc(f.officer)}</b> <span class="faint">· ${esc(f.cadre)} · HRMS ${esc(f.id)} · ${esc(f.division)}, ${esc(f.circle)}</span>
             <div class="faint">Sent by ${esc(f.name)}${f.designation ? ', ' + esc(f.designation) : ''} · ${esc(f.email)} · ${esc(f.on)}</div></div>
           ${pend.length ? `<button class="btn sm" data-dec="reject" data-sid="${esc(sid)}">Reject</button><button class="btn sm primary" data-dec="approve" data-sid="${esc(sid)}">Approve ${pend.length}</button>` : ''}</div>
           <table><tr><th>Field</th><th>Change</th><th>Status</th></tr>${g.map(x => `<tr><td>${x.type === 'Add' ? '<b>New officer</b>' : esc(FL.label(x.field))}</td>

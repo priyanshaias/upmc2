@@ -97,7 +97,11 @@
   }
   const wait = ms => new Promise(r => setTimeout(r, ms));
   const now = () => { const d = new Date(); return `${p2(d.getDate())}-${p2(d.getMonth() + 1)}-${d.getFullYear()} ${p2(d.getHours())}:${p2(d.getMinutes())}`; };
-  const find = (cadre, id) => { for (const k in store) { const o = store[k].find(x => x.cadre === cadre && x.id === id); if (o) return o; } throw new Error('Officer not found.'); };
+  const find = (cadre, id) => { for (const k in store) { const o = store[k].find(x => x.cadre === cadre && x.id === id && !x.incoming); if (o) return o; } throw new Error('Officer not found.'); };
+  function relocate(o) {   // after an approved transfer, move the officer to its new division list
+    for (const k in store) store[k] = store[k].filter(x => !(x.cadre === o.cadre && x.id === o.id));
+    officers(o.data.Circle, o.data.Division).push(o);
+  }
 
   async function call(action, body, user) {
     await wait(250 + Math.random() * 250);
@@ -131,6 +135,10 @@
           designation: body.operator.designation || '', mobile: body.operator.mobile || '', cadre: o.cadre, type: 'Edit', id: o.id, officer: o.data.Name,
           circle: o.data.Circle, division: o.data.Division, field: c.field, oldValue: o.data[c.field] || '', newValue: c.value, status: 'Pending', current: o.data[c.field] || '', conflict: false }); });
       o.status = 'pending';
+      const nd = ch.find(c => c.field === 'Division');
+      if (nd) { const nc = (ch.find(c => c.field === 'Circle') || {}).value || o.data.Circle, copy = JSON.parse(JSON.stringify(o));
+        ch.forEach(c => copy.data[c.field] = c.value); Object.assign(copy, { incoming: true, from: o.data.Circle + ' / ' + o.data.Division });
+        officers(nc, nd.value).push(copy); }
       return { submissionId: 'S-demo', count: ch.length };
     }
     if (action === 'adminSummary') {
@@ -139,6 +147,16 @@
         rejected: log.filter(l => l.status === 'Rejected').length, verifiedToday: 0, byCadre: {} };
     }
     if (action === 'adminRefresh') return { builtAt: now(), divisions: 70 };
+    if (action === 'search') {
+      const q = String(body.q || '').toLowerCase().trim(); if (q.length < 3) throw new Error('Type at least 3 letters or digits.');
+      CIRCLES.forEach(c => c.divisions.forEach(d => officers(c.circle, d)));
+      const out = [];
+      for (const k in store) store[k].forEach(o => { if (o.cadre !== body.cadre || o.incoming) return;
+        const hay = (o.id + ' ' + o.data.Name).toLowerCase(); if (!q.split(/\s+/).every(t => hay.includes(t))) return;
+        out.push({ cadre: o.cadre, id: o.id, isNew: !!o.isNew, status: o.status, name: o.data.Name, designation: o.data.Designation, circle: o.data.Circle,
+          division: o.data.Division, range: o.data['Present Range / Office'] || '', pendingTransfer: o.pending.some(p => p.field === 'Division') }); });
+      return { results: out.slice(0, 25), more: Math.max(0, out.length - 25) };
+    }
     if (action === 'addOfficer') {
       const d = body.data, list = officers(d.Circle, d.Division);
       for (const k in store) if (store[k].some(o => o.id === d['Employee ID'])) throw new Error('HRMS ID ' + d['Employee ID'] + ' already belongs to another officer.');
@@ -164,6 +182,8 @@
         else { l.status = 'Rejected'; rejected++; }
         o.pending = o.pending.filter(p => !(p.field === l.field && p.value === l.newValue));
         if (!o.pending.length) o.status = o.data.Verification === 'Pending' ? 'unverified' : 'verified';
+        if (l.field === 'Division' && body.decision === 'approve') relocate(o);
+        if (l.field === 'Division' && body.decision !== 'approve') for (const k in store) store[k] = store[k].filter(x => !(x.incoming && x.id === o.id));
       });
       return { applied, rejected, conflicts: [], errors: [] };
     }

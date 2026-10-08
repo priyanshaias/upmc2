@@ -48,7 +48,7 @@ function doPost(e) {
     if (body.action === 'logout') { logout_(body.token); return json_({ ok: true, data: {} }); }
     const user = authenticate_(body.token);
     const handlers = {
-      meta: meta_, division: division_, verify: verify_, submit: submit_, addOfficer: addOfficer_,
+      meta: meta_, division: division_, verify: verify_, submit: submit_, addOfficer: addOfficer_, search: search_,
       adminSummary: adminSummary_, adminChanges: adminChanges_, adminDecide: adminDecide_, adminRefresh: adminRefresh_, adminData: adminData_,
     };
     const fn = handlers[body.action];
@@ -237,6 +237,8 @@ function buildAll_() {
         status: p.length ? 'pending' : statusOf_(r, {}) });
     });
   });
+  // pending transfers: show the officer in the target division as "transfer in"
+  Object.keys(divs).forEach(k => divs[k].officers.slice().forEach(o => addIncoming_(divs, o)));
   readLog_().rows.forEach(l => {
     if (l['Status'] !== 'Pending' || l['Type'] !== 'Add' || !CADRES[l['Cadre']]) return;
     let data = {}; try { data = JSON.parse(l['New Value']); } catch (e) { return; }
@@ -251,9 +253,44 @@ function buildAll_() {
   cput_(put);
   return { meta, schema, divs };
 }
+/** If an officer has a pending division change, put a read-only "transfer in" copy in the target division. */
+function addIncoming_(divs, o, loader) {
+  if (o.incoming || !o.pending || !o.pending.length) return null;
+  const pv = f => { const x = o.pending.filter(p => p.field === f).slice(-1)[0]; return x ? x.value : null; };
+  const nd = pv('Division'); if (!nd || nd === o.data['Division']) return null;
+  const nc = pv('Circle') || o.data['Circle'], k = divKey_(nc, nd);
+  const copy = { cadre: o.cadre, id: o.id, row: null, incoming: true, status: 'pending', pending: o.pending,
+    from: o.data['Circle'] + ' / ' + o.data['Division'], data: Object.assign({}, o.data) };
+  o.pending.forEach(p => { if (p.field !== '(New officer)') copy.data[p.field] = p.value; });
+  const d = divs[k] = divs[k] || (loader && loader(nc, nd)) || { officers: [] };
+  d.officers = d.officers.filter(x => !(x.incoming && x.id === o.id && x.cadre === o.cadre));
+  d.officers.push(copy);
+  return { key: k, circle: nc, division: nd, d };
+}
+
+/** Operators: find an officer of a cadre anywhere in the register, by HRMS ID or name (for "already listed?" checks). */
+function search_(body) {
+  const code = body.cadre; cadre_(code);
+  const q = String(body.q || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  if (q.length < 3) throw new Error('Type at least 3 letters or digits.');
+  const meta = getMeta_(), keys = Object.keys(meta.counts).filter(k => meta.counts[k].total).map(k => 'div|' + k);
+  const got = CacheService.getScriptCache().getAll(keys);
+  const divs = Object.keys(got).length < keys.length ? buildAll_().divs : keys.reduce((a, k) => (a[k] = ungz_(got[k]), a), {});
+  const toks = q.split(' '), out = [];
+  Object.keys(divs).forEach(k => divs[k].officers.forEach(o => {
+    if (o.cadre !== code || o.incoming) return;
+    const hay = (String(o.id) + ' ' + String(o.data.Name || '')).toLowerCase();
+    if (!toks.every(t => hay.indexOf(t) >= 0)) return;
+    out.push({ cadre: o.cadre, id: o.id, isNew: !!o.isNew, status: o.status, name: o.data.Name, designation: o.data.Designation,
+      circle: o.data.Circle, division: o.data.Division, range: o.data['Present Range / Office'] || '', beat: o.data['Present Beat'] || '',
+      pendingTransfer: (o.pending || []).some(p => p.field === 'Division') });
+  }));
+  return { results: out.slice(0, 25), more: Math.max(0, out.length - 25) };
+}
+
 function countsOf_(d) {
   const c = { total: 0, verified: 0, pending: 0 };
-  d.officers.forEach(o => { c.total++; if (o.status === 'pending') c.pending++; else if (o.status === 'verified') c.verified++; });
+  d.officers.forEach(o => { if (o.incoming) return; c.total++; if (o.status === 'pending') c.pending++; else if (o.status === 'verified') c.verified++; });
   return c;
 }
 function getMeta_() { return cget_('meta') || buildAll_().meta; }
@@ -346,11 +383,18 @@ function submit_(body, user) {
         rec[CONFIG.KEY], rec['Name'], rec['Circle'], rec['Division'], ch.field, rec[ch.field], nv, 'Pending', '', '']);
     });
     if (!rows.length) throw new Error('Nothing was changed.');
+    const chg = f => rows.some(r => r[13] === f);
+    if (chg('Division') && !chg('Division Date')) throw new Error('This is a transfer: enter the date of joining the new division (Division date).');
+    if (chg('Circle') && !chg('Circle Date')) throw new Error('This is a transfer to another circle: enter the date of joining the new circle (Circle date).');
     appendLog_(rows);
     if (L.o) {
       rows.forEach(r => L.o.pending.push({ field: r[13], value: r[15], by: r[4], on: r[2] }));
       L.o.status = 'pending';
       saveDiv_(rec['Circle'], rec['Division'], L.d);
+      if (chg('Division')) {
+        const inc = addIncoming_({}, L.o, getDiv_);
+        if (inc) saveDiv_(inc.circle, inc.division, inc.d);
+      }
     }
     return { submissionId: sub, count: rows.length };
   } finally { lock.releaseLock(); }
