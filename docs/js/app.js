@@ -17,10 +17,57 @@
 
   /* ---------------- small helpers ---------------- */
   function toast(msg, err) { const t = $('#toast'); t.textContent = msg; t.className = 'toast on' + (err ? ' err' : ''); clearTimeout(t._t); t._t = setTimeout(() => t.className = 'toast', 3800); }
-  function busy(text, withBar) {
+  /* ---------- loading animation: a tree that draws itself, a moving bar, rotating messages and tips ---------- */
+  const TREE = `<svg class="tree" viewBox="0 0 64 64" aria-hidden="true">
+    <path class="canopy" d="M32 7c-8 0-14 6-14 13.5 0 1.6.3 3 .8 4.4C14.2 27 11 31.3 11 36.5 11 43.4 16.8 49 24 49h16c7.2 0 13-5.6 13-12.5 0-5.2-3.2-9.5-7.8-11.6.5-1.4.8-2.8.8-4.4C46 13 40 7 32 7Z"/>
+    <path class="trunk" d="M32 57V30M32 42l-7-6M32 37l6-5"/>
+    <path class="ground" d="M17 57h30"/></svg>`;
+  const TIPS = [
+    'Tip: the “Posting and home district” box is the most important part. Check it first.',
+    'Tip: the download icon on each card gives that officer’s information sheet as a PDF.',
+    'Tip: use the “Not verified” filter to see who is left in your division.',
+    'Tip: changes you make go to the administrator for approval before they count.',
+    'Tip: a blue tick next to a name means the officer is verified.',
+  ];
+  const STEPS = {
+    circles: ['Opening the PMC register…', 'Counting officers in every circle…', 'Checking what has been verified…', 'Almost there…'],
+    division: ['Fetching the officers…', 'Reading posting details…', 'Arranging cards by cadre…', 'Almost there…'],
+    save: ['Saving…', 'Writing to the register…', 'Almost done…'],
+    pdf: ['Preparing the information sheets…', 'Laying out each page…', 'Adding the emblem and signatures…'],
+    admin: ['Collecting changes sent by divisions…', 'Comparing with the register…', 'Almost there…'],
+  };
+  function loaderHtml(kind, title) {
+    return `<div class="loader" data-kind="${kind}">${TREE}
+      <b class="ld-title">${esc(title || STEPS[kind][0])}</b>
+      <div class="ibar"><i></i></div>
+      <p class="ld-step">${esc(STEPS[kind][1] || '')}</p>
+      <p class="ld-tip">${esc(TIPS[Math.floor(Math.random() * TIPS.length)])}</p>
+      <p class="ld-slow faint"></p></div>`;
+  }
+  /** Rotates the messages of every .loader on screen; stops by itself when the loader is gone. */
+  function animateLoader(root) {
+    const el = root.querySelector('.loader'); if (!el) return;
+    const steps = STEPS[el.dataset.kind] || STEPS.division, t0 = Date.now();
+    let i = 1, tip = Math.floor(Math.random() * TIPS.length);
+    const timer = setInterval(() => {
+      if (!document.body.contains(el)) return clearInterval(timer);
+      const secs = (Date.now() - t0) / 1000;
+      const st = el.querySelector('.ld-step');
+      if (i < steps.length - 1 || secs > 9) { i = Math.min(i + 1, steps.length - 1); swapText(st, steps[i]); }
+      if (Math.round(secs) % 6 === 0) { tip = (tip + 1) % TIPS.length; swapText(el.querySelector('.ld-tip'), TIPS[tip]); }
+      if (secs > 8) el.querySelector('.ld-slow').textContent = 'The first load of the day can take up to 20 seconds. Thank you for waiting.';
+    }, 2600);
+  }
+  function swapText(node, text) {
+    if (!node || node.textContent === text) return;
+    node.classList.add('out');
+    setTimeout(() => { node.textContent = text; node.classList.remove('out'); }, 220);
+  }
+  function busy(text, withBar, kind) {
     const el = document.createElement('div'); el.className = 'busy';
-    el.innerHTML = `<div class="box"><div class="spinner"></div><b>${esc(text)}</b>${withBar ? '<div class="track"><i></i></div>' : ''}</div>`;
+    el.innerHTML = `<div class="box">${loaderHtml(kind || (withBar ? 'pdf' : 'save'), text)}${withBar ? '<div class="track"><i></i></div>' : ''}</div>`;
     document.body.appendChild(el);
+    animateLoader(el);
     return { set: p => { const i = el.querySelector('.track i'); if (i) i.style.width = Math.round(p * 100) + '%'; }, done: () => el.remove() };
   }
   function op() { try { return JSON.parse(localStorage.getItem('upmc_operator') || 'null'); } catch (e) { return null; } }
@@ -134,11 +181,14 @@
   }
   async function renderCircles() {
     app.innerHTML = `<div class="head"><div><h1 class="page-title">Choose your circle.</h1><p class="page-sub">Then pick your division to see its officers.</p></div></div>
-      <div class="tiles">${'<div class="skeleton"></div>'.repeat(8)}</div>`;
+      ${S.meta ? '' : loaderHtml('circles')}<div class="tiles">${'<div class="skeleton"></div>'.repeat(8)}</div>`;
+    animateLoader(app);
     const m = await ensureMeta();
+    const ld = app.querySelector('.loader'); if (ld) ld.remove();
     app.querySelector('.tiles').innerHTML = m.circles.map((c, i) => tile(c.circle, c.office, countFor(c.circle), `#/c/${encodeURIComponent(c.circle)}`, i)).join('');
   }
   async function renderDivisions(circle) {
+    if (!S.meta) { app.innerHTML = loaderHtml('circles') + `<div class="tiles">${'<div class="skeleton"></div>'.repeat(6)}</div>`; animateLoader(app); }
     const m = await ensureMeta();
     const c = m.circles.find(x => x.circle === circle);
     if (!c) { go('#/circles'); return; }
@@ -157,7 +207,9 @@
   async function renderDivision(circle, division) {
     app.innerHTML = `<div class="crumbs"><a href="#/circles">All circles</a><span class="sep">/</span><a href="#/c/${encodeURIComponent(circle)}">${esc(circle)}</a><span class="sep">/</span><span>${esc(division)}</span></div>
       <div class="head"><div><h1 class="page-title">${esc(division)}</h1><p class="page-sub">${esc(circle)} circle. Open each officer, check the details and verify.</p></div></div>
+      ${loaderHtml('division', `Fetching the officers of ${division}…`)}
       <div class="cards">${'<div class="skeleton"></div>'.repeat(9)}</div>`;
+    animateLoader(app);
     await ensureMeta();
     const d = await guard(() => API.call('division', { circle, division }));
     S.div = { circle, division, officers: d.officers, schema: d.schema };
@@ -343,7 +395,7 @@
     if (!o.data['Home District']) mis.push('home district');
     if (!o.data['District in which Range lies']) mis.push('district of the range');
     if (mis.length && !confirm(`The ${mis.join(' and ')} ${mis.length > 1 ? 'are' : 'is'} not recorded.\n\nPress Cancel and use Edit to fill ${mis.length > 1 ? 'them' : 'it'}, or OK to verify anyway.`)) return;
-    const b = busy('Saving verification…');
+    const b = busy('Saving verification…', false, 'save');
     try {
       const r = await guard(() => API.call('verify', { cadre: o.cadre, id: o.id, circle: S.div.circle, division: S.div.division, operator: op() }));
       Object.assign(o.data, { Verification: 'Verified - All correct', 'Last Updated By': r.verifiedBy, 'Last Updated On': r.verifiedOn });
@@ -359,7 +411,7 @@
     const changes = Object.entries(S.edits).map(([field, value]) => ({ field, value }));
     if (!changes.length) return;
     if (!changes.some(c => c.field === 'Verification')) changes.push({ field: 'Verification', value: 'Corrected' });
-    const b = busy('Sending for approval…');
+    const b = busy('Sending for approval…', false, 'save');
     try {
       const r = await guard(() => API.call('submit', { cadre: o.cadre, id: o.id, circle: S.div.circle, division: S.div.division, changes, operator: op() }));
       o.pending = (o.pending || []).concat(changes.map(c => ({ field: c.field, value: c.value, by: (op() || {}).name, on: 'now' })));
@@ -379,7 +431,7 @@
 
   async function pdfOne(o, quiet) {
     if (!window.pdfMake) { toast('The PDF tool is still loading. Please try again in a moment.', true); return; }
-    const b = quiet ? null : busy('Preparing the information sheet…');
+    const b = quiet ? null : busy('Preparing the information sheet…', false, 'pdf');
     try { const name = await PDF.officer(o, S.div.schema[o.cadre]); if (!quiet) toast('Downloaded ' + name); }
     catch (e) { toast('Could not make the PDF: ' + e.message, true); }
     finally { b && b.done(); }
@@ -405,7 +457,8 @@
       <div class="kpis" id="kpis">${'<div class="skeleton" style="height:76px"></div>'.repeat(4)}</div>
       <div class="toolbar"><div class="chips">${['Pending', 'Approved', 'Rejected', 'All'].map(s => `<button class="chip${s === status ? ' on' : ''}" data-s="${s}">${s}</button>`).join('')}</div>
         <label class="search">${icon.search}<input id="aq" placeholder="Search officer, operator or field"></label></div>
-      <div id="alist"><div class="skeleton"></div></div>`;
+      <div id="alist">${loaderHtml('admin')}</div>`;
+    animateLoader(app);
     app.querySelectorAll('[data-s]').forEach(b => b.onclick = () => renderAdmin(b.dataset.s));
     $('#refreshData').onclick = async () => {
       const bz = busy('Reading the Google Sheet again… this can take up to a minute.');

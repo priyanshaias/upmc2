@@ -226,7 +226,8 @@ main { max-width: var(--container); margin: 0 auto; padding: 28px 20px 120px; }
 .toast.on { transform: translate(-50%, 0); opacity: 1; }
 .toast.err { background: var(--danger-ink); }
 .busy { position: fixed; inset: 0; z-index: 70; background: rgba(255,255,255,.75); display: grid; place-items: center; }
-.busy .box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-16); padding: 22px 26px; box-shadow: var(--shadow-card); min-width: 280px; text-align: center; }
+.busy .box { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-16); padding: 8px 26px 22px; box-shadow: var(--shadow-card); width: min(420px, calc(100vw - 32px)); text-align: center; }
+.busy .box .loader { margin: 0; padding: 18px 0 6px; border: 0; background: none; }
 .busy .box b { color: var(--ink); display: block; margin-bottom: 10px; }
 .busy .track { height: 8px; background: var(--track); border-radius: var(--radius-pill); overflow: hidden; }
 .busy .track i { display: block; height: 100%; width: 0; background: var(--primary); transition: width .2s; }
@@ -277,3 +278,26 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--primary); 
 }
 
 @media (max-width: 720px) { .hide-sm { display: none !important; } }
+
+/* ---------- loading animation ---------- */
+.loader { text-align: center; padding: 30px 20px 26px; margin-bottom: 18px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-16);
+  animation: up .45s var(--ease) both; }
+.loader .tree { width: 74px; height: 74px; display: block; margin: 0 auto 10px; overflow: visible; }
+.loader .tree path { fill: none; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.loader .canopy { stroke: var(--prelims); fill: var(--prelims-tint) !important; stroke-dasharray: 150; stroke-dashoffset: 150;
+  animation: draw 2.8s var(--ease) infinite, sway 2.8s ease-in-out infinite; transform-origin: 32px 49px; }
+.loader .trunk { stroke: var(--ink); stroke-dasharray: 60; stroke-dashoffset: 60; animation: draw 2.8s var(--ease) infinite; }
+.loader .ground { stroke: var(--border-strong); }
+.loader .ld-title { display: block; color: var(--ink); font-size: 17px; font-weight: 800; letter-spacing: -0.015em; }
+.loader .ld-step { margin: 10px 0 0; font-size: 14px; color: var(--text-body); min-height: 22px; transition: opacity .22s, transform .22s; }
+.loader .ld-tip { margin: 14px auto 0; max-width: 460px; font-size: 13px; color: var(--interview-ink); background: var(--interview-tint); padding: 8px 12px;
+  border-radius: var(--radius-9); transition: opacity .22s, transform .22s; }
+.loader .ld-slow { margin: 10px 0 0; min-height: 18px; }
+.loader .out { opacity: 0; transform: translateY(4px); }
+.ibar { position: relative; height: 6px; max-width: 260px; margin: 14px auto 0; background: var(--track); border-radius: var(--radius-pill); overflow: hidden; }
+.ibar i { position: absolute; top: 0; bottom: 0; width: 40%; border-radius: inherit; background: linear-gradient(90deg, var(--prelims), var(--primary)); animation: slide 1.4s ease-in-out infinite; }
+@keyframes draw { 0% { stroke-dashoffset: var(--len, 150); } 45%, 75% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: calc(var(--len, 150) * -1); } }
+@keyframes sway { 0%, 100% { transform: rotate(0deg); } 50% { transform: rotate(2.5deg); } }
+@keyframes slide { 0% { left: -40%; } 100% { left: 100%; } }
+.loader .trunk { --len: 60; }
+@media (prefers-reduced-motion: reduce) { .loader .canopy, .loader .trunk { stroke-dashoffset: 0; } }
