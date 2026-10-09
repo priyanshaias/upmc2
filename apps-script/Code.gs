@@ -50,7 +50,7 @@ function doPost(e) {
     const user = authenticate_(body.token);
     const handlers = {
       meta: meta_, division: division_, verify: verify_, submit: submit_, addOfficer: addOfficer_, search: search_,
-      adminSummary: adminSummary_, adminChanges: adminChanges_, adminDecide: adminDecide_, adminRefresh: adminRefresh_, adminData: adminData_,
+      adminSummary: adminSummary_, adminChanges: adminChanges_, adminQueue: adminQueue_, adminDecide: adminDecide_, adminRefresh: adminRefresh_, adminData: adminData_,
     };
     const fn = handlers[body.action];
     if (!fn) throw new Error('Unknown action: ' + body.action);
@@ -477,10 +477,10 @@ function id8_() { return Utilities.getUuid().slice(0, 8); }
 
 /* ============================================================ admin */
 
-function adminSummary_() {
+function adminSummary_(body, log) {
   const s = { pending: 0, submissions: 0, approved: 0, rejected: 0, verifiedToday: 0, byCadre: {} };
   const subs = {}, today = Utilities.formatDate(new Date(), CONFIG.TZ, 'dd-MM-yyyy');
-  readLog_().rows.forEach(l => {
+  (log || readLog_()).rows.forEach(l => {
     if (l['Status'] === 'Pending') { s.pending++; subs[l['Submission ID']] = 1; s.byCadre[l['Cadre']] = (s.byCadre[l['Cadre']] || 0) + 1; }
     else if (l['Type'] === 'Verify') { if (String(l['Submitted On']).indexOf(today) === 0) s.verifiedToday++; }
     else if (l['Status'] === 'Approved') s.approved++;
@@ -490,10 +490,26 @@ function adminSummary_() {
   return s;
 }
 
-function adminChanges_(body) {
+/** Approvals screen in one call: the counts and the list, from one read of the Change Log. */
+function adminQueue_(body) {
+  const log = readLog_();
+  return { summary: adminSummary_(body, log), rows: adminChanges_(body, log) };
+}
+/** Current sheet values for the conflict check, taken from the cache (the sheet is checked again when approving). */
+function cachedIndex_() {
+  const meta = cget_('meta'); if (!meta) return null;
+  const keys = Object.keys(meta.counts).filter(k => meta.counts[k].total).map(k => 'div|' + k);
+  const got = CacheService.getScriptCache().getAll(keys);
+  if (Object.keys(got).length < keys.length) return null;
+  const idx = {};
+  keys.forEach(k => ungz_(got[k]).officers.forEach(o => { if (!o.incoming && !o.isNew) idx[o.cadre + '|' + o.id] = o.data; }));
+  return idx;
+}
+function adminChanges_(body, log) {
   const f = body.filter || {};
   const masters = {}, master = c => masters[c] = masters[c] || readSheet_(c);
-  return readLog_().rows.filter(l => l['Type'] !== 'Verify' &&
+  let idx; const current = (c, id) => { if (idx === undefined) idx = cachedIndex_(); return idx ? idx[c + '|' + id] : master(c).index[id]; };
+  return (log || readLog_()).rows.filter(l => l['Type'] !== 'Verify' &&
     (!f.status || f.status === 'All' || l['Status'] === f.status) &&
     (!f.cadre || l['Cadre'] === f.cadre) && (!f.circle || l['Circle'] === f.circle)
   ).reverse().slice(0, 2000).map(l => {
@@ -502,7 +518,7 @@ function adminChanges_(body) {
       type: l['Type'], id: l['Employee ID'], officer: l['Name'], circle: l['Circle'], division: l['Division'],
       field: l['Field'], oldValue: l['Old Value'], newValue: l['New Value'], status: l['Status'], reviewedOn: l['Reviewed On'], note: l['Review Note'] };
     if (CADRES[o.cadre] && o.type !== 'Add') {
-      const rec = master(o.cadre).index[o.id];
+      const rec = current(o.cadre, o.id);
       o.current = rec ? rec[o.field] : '(record missing)';
       o.conflict = o.status === 'Pending' && o.current !== o.oldValue;
     }
@@ -515,12 +531,22 @@ function adminDecide_(body, user) {
   const lock = LockService.getScriptLock(); lock.waitLock(30000);
   try {
     const lsh = logSheet_(), log = readLog_(), lc = h => log.headers.indexOf(h) + 1;
-    const res = { applied: 0, rejected: 0, conflicts: [], errors: [] };
+    const res = { applied: 0, rejected: 0, conflicts: [], errors: [], done: {} };
     const masters = {}, master = c => masters[c] = masters[c] || readSheet_(c);
     const when = new Date(), whenTxt = Utilities.formatDate(when, CONFIG.TZ, 'dd-MM-yyyy HH:mm');
+    const touched = {}, touch = (code, id) => { touched[code + '|' + id] = { code, id }; };
+    const marks = [], mark = (l, status, note) => {
+      l['Status'] = status; l['Reviewed On'] = whenTxt; if (note) l['Review Note'] = note;
+      marks.push(l); res.done[l['Change ID']] = status;
+    };
     log.rows.filter(l => ids[l['Change ID']] && l['Status'] === 'Pending').forEach(l => {
       try {
-        if (body.decision === 'reject') { mark_(lsh, l._row, lc, 'Rejected', whenTxt, body.note); res.rejected++; return; }
+        const addId = () => { try { return JSON.parse(l['New Value'])[CONFIG.KEY]; } catch (e) { return l['Employee ID']; } };
+        if (body.decision === 'reject') {
+          mark(l, 'Rejected', body.note); res.rejected++;
+          if (CADRES[l['Cadre']]) touch(l['Cadre'], l['Type'] === 'Add' ? addId() : l['Employee ID']);
+          return;
+        }
         const by0 = l['Submitter Name'] + (l['Submitter Designation'] ? ' (' + l['Submitter Designation'] + ')' : '') + ' · ' + l['Submitted By (email)'];
         if (l['Type'] === 'Add') {
           const code = l['Cadre'], m = master(code), data = JSON.parse(l['New Value']);
@@ -533,9 +559,10 @@ function adminDecide_(body, user) {
           });
           const rg = sh.getRange(row, 1, 1, m.headers.length);
           rg.setNumberFormats([m.headers.map(h => typeOf_(h) === 'date' ? 'dd-mm-yyyy' : (h === 'Last Updated On' ? 'dd-mm-yyyy hh:mm' : '@'))]).setValues([vals]);
-          const o = { _row: row }; m.headers.forEach(h => o[h] = data[h] || ''); m.index[data[CONFIG.KEY]] = o;
-          mark_(lsh, l._row, lc, 'Approved', whenTxt, body.note || ('Approved by ' + user.email));
-          res.applied++; return;
+          const o = { _row: row }; m.headers.forEach(h => o[h] = h === 'Last Updated On' ? whenTxt : fmt_(data[h] !== undefined ? data[h] : (extra[h] || '')));
+          m.index[data[CONFIG.KEY]] = o; m.rows.push(o);
+          mark(l, 'Approved', body.note || ('Approved by ' + user.email));
+          touch(code, data[CONFIG.KEY]); res.applied++; return;
         }
         const code = l['Cadre'], m = master(code), rec = m.index[l['Employee ID']];
         if (!rec) throw new Error('Officer not found ' + l['Employee ID']);
@@ -547,16 +574,63 @@ function adminDecide_(body, user) {
         if (typeOf_(l['Field']) === 'date') cell.setNumberFormat('dd-mm-yyyy').setValue(l['New Value'] ? parseDate_(l['New Value']) : '');
         else cell.setNumberFormat('@').setValue(l['New Value']);
         rec[l['Field']] = l['New Value'];
-        const by = l['Submitter Name'] + (l['Submitter Designation'] ? ' (' + l['Submitter Designation'] + ')' : '') + ' · ' + l['Submitted By (email)'];
-        sh.getRange(rec._row, col('Last Updated By')).setNumberFormat('@').setValue(by);
+        sh.getRange(rec._row, col('Last Updated By')).setNumberFormat('@').setValue(by0);
         sh.getRange(rec._row, col('Last Updated On')).setNumberFormat('dd-mm-yyyy hh:mm').setValue(when);
-        mark_(lsh, l._row, lc, 'Approved', whenTxt, body.note || ('Approved by ' + user.email));
-        res.applied++;
+        rec['Last Updated By'] = by0; rec['Last Updated On'] = whenTxt;
+        mark(l, 'Approved', body.note || ('Approved by ' + user.email));
+        touch(code, l['Employee ID']); res.applied++;
       } catch (err) { res.errors.push(l['Change ID'] + ': ' + err.message); }
     });
-    buildAll_();
+    // Status, Reviewed On and Review Note sit side by side: one write per log row
+    const c0 = lc('Status'), side = lc('Reviewed On') === c0 + 1 && lc('Review Note') === c0 + 2;
+    marks.forEach(l => {
+      if (side) lsh.getRange(l._row, c0, 1, 3).setNumberFormat('@').setValues([[l['Status'], l['Reviewed On'], l['Review Note'] || '']]);
+      else mark_(lsh, l._row, lc, l['Status'], l['Reviewed On'], l['Review Note']);
+    });
+    if (marks.length) refreshOfficers_(touched, masters, log);
     return res;
   } finally { lock.releaseLock(); }
+}
+
+/** After approvals: rebuilds only the officers that changed, inside the cached divisions,
+ * instead of re-reading every sheet (that full rebuild is what made approvals slow). */
+function refreshOfficers_(touched, masters, log) {
+  const meta = cget_('meta'); if (!meta) { buildAll_(); return; }
+  const keys = Object.keys(meta.counts).filter(k => meta.counts[k].total).map(k => 'div|' + k);
+  const got = CacheService.getScriptCache().getAll(keys);
+  if (Object.keys(got).length < keys.length) { buildAll_(); return; }
+  const divs = {}; keys.forEach(k => divs[k] = ungz_(got[k]));
+  const pending = {};
+  log.rows.forEach(l => {
+    if (l['Status'] !== 'Pending' || l['Type'] !== 'Edit') return;
+    const k = l['Cadre'] + '|' + l['Employee ID'];
+    if (touched[k]) (pending[k] = pending[k] || []).push({ field: l['Field'], value: l['New Value'], by: l['Submitter Name'], on: l['Submitted On'] });
+  });
+  const changed = {};
+  Object.keys(touched).forEach(k => {
+    const t = touched[k], same = o => o.cadre === t.code && String(o.id) === String(t.id);
+    let old = null, oldKey = null, oldPos = -1;
+    Object.keys(divs).forEach(dk => {
+      const list = divs[dk].officers, i = list.findIndex(o => same(o) && !o.incoming);
+      if (i >= 0 && !old) { old = list[i]; oldKey = dk; oldPos = i; }
+      const kept = list.filter(o => !same(o));
+      if (kept.length !== list.length) { divs[dk].officers = kept; changed[dk] = 1; }
+    });
+    const rec = masters[t.code] && masters[t.code].index[t.id];
+    let data;
+    if (rec) { data = Object.assign({}, rec); delete data._row; }
+    else if (old && !old.isNew) data = old.data;      // rejected edit: sheet unchanged
+    else return;                                       // rejected new officer: gone
+    const p = pending[k] || [];
+    const o = { cadre: t.code, id: t.id, row: rec ? rec._row : old.row, data, pending: p, status: p.length ? 'pending' : statusOf_(data, {}) };
+    const dk = divKey_(data['Circle'], data['Division']), d = divs[dk] = divs[dk] || { officers: [] };
+    if (dk === oldKey) d.officers.splice(oldPos, 0, o); else d.officers.push(o);
+    changed[dk] = 1;
+    const inc = addIncoming_(divs, o); if (inc) changed[inc.key] = 1;
+  });
+  const put = { meta };
+  Object.keys(changed).forEach(dk => { put[dk] = divs[dk]; meta.counts[dk.slice(4)] = countsOf_(divs[dk]); });
+  cput_(put);
 }
 
 /** Admin dashboard: every officer of one cadre (from the cache), with the field schema. */

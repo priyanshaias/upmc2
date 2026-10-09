@@ -176,6 +176,7 @@
       const schema = {}; schema[body.cadre] = HEAD[body.cadre].map(h => ({ name: h, type: typeOf(h) }));
       return { cadre: body.cadre, officers: JSON.parse(JSON.stringify(officersOf)), schema, builtAt: now(), circles: CIRCLES };
     }
+    if (action === 'adminQueue') return { summary: await call('adminSummary', body, user), rows: await call('adminChanges', body, user) };
     if (action === 'adminChanges') { const f = body.filter || {}; return log.filter(l => !f.status || f.status === 'All' || l.status === f.status).slice().reverse(); }
     if (action === 'adminDecide') {
       let applied = 0, rejected = 0;
@@ -189,7 +190,8 @@
         if (l.field === 'Division' && body.decision === 'approve') relocate(o);
         if (l.field === 'Division' && body.decision !== 'approve') for (const k in store) store[k] = store[k].filter(x => !(x.incoming && x.id === o.id));
       });
-      return { applied, rejected, conflicts: [], errors: [] };
+      const done = {}; log.forEach(l => { if (body.ids.includes(l.changeId) && l.status !== 'Pending') done[l.changeId] = l.status; });
+      return { applied, rejected, conflicts: [], errors: [], done };
     }
     throw new Error('Unknown action ' + action);
   }

@@ -13,7 +13,7 @@
 
   // Reads are retried automatically when Google's servers hiccup (slow start, temporary 404/500, non-JSON page).
   // Writes are sent once, so a slow reply can never create a duplicate change.
-  const SAFE = ['login', 'logout', 'meta', 'division', 'adminData', 'adminSummary', 'adminChanges'];
+  const SAFE = ['login', 'logout', 'meta', 'division', 'adminData', 'adminSummary', 'adminChanges', 'adminQueue'];
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   async function post(payload) {
     const tries = SAFE.includes(payload.action) ? 3 : 1;

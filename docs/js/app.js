@@ -722,7 +722,8 @@
         <span class="sp"></span><button class="btn" id="refreshData" title="Use after editing the Google Sheet by hand">↻ Refresh data from sheet</button></div>
       <div class="kpis" id="kpis">${'<div class="skeleton" style="height:76px"></div>'.repeat(4)}</div>
       <div class="toolbar"><div class="chips">${['Pending', 'Approved', 'Rejected', 'All'].map(s => `<button class="chip${s === status ? ' on' : ''}" data-s="${s}">${s}</button>`).join('')}</div>
-        <label class="search">${icon.search}<input id="aq" placeholder="Search officer, operator or field"></label></div>
+        <label class="search">${icon.search}<input id="aq" placeholder="Search officer, operator or field"></label>
+        ${status === 'Pending' ? '<button class="btn primary" id="approveAll" hidden></button>' : ''}</div>
       <div id="alist">${loaderHtml('admin')}</div>`;
     animateLoader(app);
     app.querySelectorAll('[data-s]').forEach(b => b.onclick = () => renderAdmin(b.dataset.s));
@@ -731,12 +732,42 @@
       try { const r = await guard(() => API.call('adminRefresh')); S.meta = null; toast(`Data refreshed (${r.divisions} divisions).`); }
       catch (e) {} finally { bz.done(); }
     };
-    const [sum, rows] = await Promise.all([guard(() => API.call('adminSummary')), guard(() => API.call('adminChanges', { filter: { status } }))]);
-    $('#kpis').innerHTML = [['Changes waiting', sum.pending], ['Submissions waiting', sum.submissions], ['Approved so far', sum.approved], ['Rejected so far', sum.rejected]]
-      .map(([l, n]) => `<div class="kpi"><span>${l}</span><b>${n}</b></div>`).join('');
+    let sum, rows;
+    try { ({ summary: sum, rows } = await API.call('adminQueue', { filter: { status } })); }
+    catch (e) {   // API not redeployed yet: the older two calls
+      if (!/Unknown action/.test(e.message || '')) { guard(() => Promise.reject(e)).catch(() => {}); return; }
+      [sum, rows] = await Promise.all([guard(() => API.call('adminSummary')), guard(() => API.call('adminChanges', { filter: { status } }))]);
+    }
+    const kpis = () => { $('#kpis').innerHTML = [['Changes waiting', sum.pending], ['Submissions waiting', sum.submissions], ['Approved so far', sum.approved], ['Rejected so far', sum.rejected]]
+      .map(([l, n]) => `<div class="kpi"><span>${l}</span><b>${n}</b></div>`).join(''); };
+    kpis();
+    // apply a decision on screen instead of reloading the whole queue
+    const settle = r => {
+      if (!r.done) { S.meta = null; renderAdmin(status); return; }   // older API: reload the queue
+      const done = r.done;
+      rows.forEach(x => { if (done[x.changeId]) x.status = done[x.changeId]; });
+      if (status === 'Pending') rows = rows.filter(x => x.status === 'Pending');
+      sum.pending = Math.max(0, sum.pending - (r.applied || 0) - (r.rejected || 0));
+      sum.approved += r.applied || 0; sum.rejected += r.rejected || 0;
+      if (status === 'Pending' || status === 'All') sum.submissions = new Set(rows.filter(x => x.status === 'Pending').map(x => x.submissionId)).size;
+      kpis(); S.meta = null; try { Object.keys(sessionStorage).filter(k => k.indexOf('upmc_div_') === 0).forEach(k => sessionStorage.removeItem(k)); } catch (e) {}
+      const extra = [];
+      if (r.conflicts && r.conflicts.length) extra.push(`${r.conflicts.length} skipped because the sheet changed after they were sent`);
+      if (r.errors && r.errors.length) extra.push(`${r.errors.length} could not be applied: ${r.errors.slice(0, 2).join('; ')}`);
+      if (extra.length) toast(extra.join('. ') + '.', true);
+      draw();
+    };
     const draw = () => {
       const q = $('#aq').value.trim().toLowerCase();
       const list = rows.filter(x => !q || [x.officer, x.name, x.field, x.division, x.email].join(' ').toLowerCase().includes(q));
+      const all = $('#approveAll');
+      if (all) {
+        const pend = list.filter(x => x.status === 'Pending'), nSub = new Set(pend.map(x => x.submissionId)).size;
+        all.hidden = !pend.length;
+        all.innerHTML = `${icon.check} Approve all ${pend.length}${q ? ' shown' : ''}`;
+        all.title = `Approve ${pend.length} change(s) in ${nSub} submission(s)`;
+        all.onclick = () => approveAll(pend);
+      }
       if (!list.length) { $('#alist').innerHTML = `<div class="empty-state"><b>${status === 'Pending' ? 'Nothing is waiting for approval.' : 'Nothing here.'}</b></div>`; return; }
       const subs = {}; list.forEach(x => (subs[x.submissionId] = subs[x.submissionId] || []).push(x));
       $('#alist').innerHTML = Object.entries(subs).map(([sid, g]) => {
@@ -761,10 +792,29 @@
         try {
           const r = await guard(() => API.call('adminDecide', { ids: g.map(x => x.changeId), decision: approve ? 'approve' : 'reject', note, force: conflict }));
           toast(approve ? `${r.applied} change(s) approved.` : `${r.rejected} change(s) rejected.`);
-          S.meta = null; renderAdmin(status);
-        } catch (e) {} finally { bz.done(); }
+          bz.done(); settle(r);
+        } catch (e) { bz.done(); }
       });
     };
+    async function approveAll(pend) {
+      const nSub = new Set(pend.map(x => x.submissionId)).size, nCon = pend.filter(x => x.conflict).length;
+      if (!confirm(`Approve all ${pend.length} change(s) in ${nSub} submission(s)?\n\nThey will be written to the master sheet.`)) return;
+      let force = false;
+      if (nCon) force = confirm(`${nCon} change(s) are for values that changed in the sheet after they were sent.\n\nOK: overwrite those too.\nCancel: skip them and approve the rest.`);
+      // send whole submissions together, about 150 changes per call
+      const bySub = {}; pend.forEach(x => (bySub[x.submissionId] = bySub[x.submissionId] || []).push(x.changeId));
+      const batches = [[]]; Object.values(bySub).forEach(g => { if (batches[batches.length - 1].length + g.length > 150 && batches[batches.length - 1].length) batches.push([]); batches[batches.length - 1].push(...g); });
+      const bz = busy(`Approving ${pend.length} change(s)…`, batches.length > 1);
+      const total = { applied: 0, rejected: 0, conflicts: [], errors: [], done: {} };
+      try {
+        for (let i = 0; i < batches.length; i++) {
+          const r = await guard(() => API.call('adminDecide', { ids: batches[i], decision: 'approve', force }));
+          total.applied += r.applied; total.conflicts.push(...(r.conflicts || [])); total.errors.push(...(r.errors || [])); Object.assign(total.done, r.done || {});
+          bz.set((i + 1) / batches.length);
+        }
+        toast(`${total.applied} change(s) approved.`);
+      } catch (e) {} finally { bz.done(); settle(total); }
+    }
     $('#aq').oninput = draw; draw();
   }
 
