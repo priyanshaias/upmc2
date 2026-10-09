@@ -11,7 +11,10 @@ GitHub Pages (docs/)  ──►  Apps Script API (apps-script/Code.gs)  ──�
   - Passwords are checked only on the server. They are stored as salted hashes in `apps-script/Config.local.gs`, which is **never committed** (see `.gitignore`).
   - After 5 wrong attempts, that username is locked for 15 minutes. A password session lasts 6 hours.
 - The website holds no officer data and no secrets. With `API_URL` empty in `docs/js/config.js`, it runs on made-up **demo data**, which is useful for training.
-- **Verify** is saved straight away. **Edits** wait in the Change Log until an admin approves them on the **Approvals** screen.
+- **Verify** is saved straight away, at one of two levels:
+  - **Posting and home district only:** use **Verify this section** in that box, or **Verify → Verify posting and home district only**. The Sheet records `Verified - Posting and home district` and the card gets an outline tick.
+  - **All details:** use **Verify → Verify all details**. The Sheet records `Verified - All correct` and the card gets the solid blue badge. A posting-only verify never downgrades a full one.
+- **Edits** wait in the Change Log until an admin approves them on the **Approvals** screen.
 - The design follows the Acads-Notion design system. The emblem is the National Emblem of India, from Wikimedia Commons (public domain).
 
 ## Setup (once)

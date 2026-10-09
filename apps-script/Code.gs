@@ -25,6 +25,7 @@ const LOG_HEADERS = ['Change ID', 'Submission ID', 'Submitted On', 'Submitted By
   'Submitter Designation', 'Submitter Mobile', 'Cadre', 'Type', 'Employee ID', 'Name', 'Circle', 'Division',
   'Field', 'Old Value', 'New Value', 'Status', 'Reviewed On', 'Review Note'];
 const VERIFIED = 'Verified - All correct';
+const VERIFIED_POSTING = 'Verified - Posting and home district';   // only the posting section checked
 const SESSION_HOURS = 6;          // password sessions last this long (Apps Script cache maximum)
 const MAX_FAILS = 5, LOCK_MIN = 15;
 
@@ -197,6 +198,7 @@ function readLists_() {
 function statusOf_(r, pendingIds) {
   if (pendingIds[r[CONFIG.KEY]]) return 'pending';
   if (r['Verification'] === VERIFIED || r['Verification'] === 'Corrected') return 'verified';
+  if (r['Verification'] === VERIFIED_POSTING) return 'partial';
   return 'unverified';
 }
 
@@ -289,8 +291,8 @@ function search_(body) {
 }
 
 function countsOf_(d) {
-  const c = { total: 0, verified: 0, pending: 0 };
-  d.officers.forEach(o => { if (o.incoming) return; c.total++; if (o.status === 'pending') c.pending++; else if (o.status === 'verified') c.verified++; });
+  const c = { total: 0, verified: 0, partial: 0, pending: 0 };
+  d.officers.forEach(o => { if (o.incoming) return; c.total++; if (c[o.status] != null) c[o.status]++; });
   return c;
 }
 function getMeta_() { return cget_('meta') || buildAll_().meta; }
@@ -339,26 +341,31 @@ function division_(body) {
   return { officers: d.officers.map(o => { const x = Object.assign({}, o); delete x.row; return x; }), schema: getSchema_() };
 }
 
-/** Marks an officer verified straight away (no approval needed). */
+/** Marks an officer verified straight away (no approval needed).
+ * body.level: 'all' (default) or 'posting' (posting and home district only). 'posting' never downgrades a full verification. */
 function verify_(body, user) {
   const code = body.cadre; cadre_(code);
+  const posting = body.level === 'posting', VAL = posting ? VERIFIED_POSTING : VERIFIED;
   const lock = LockService.getScriptLock(); lock.waitLock(30000);
   try {
     const L = locate_(code, body.id, body.circle, body.division), rec = L.rec, col = h => L.headers.indexOf(h) + 1;
+    if (posting && (rec['Verification'] === VERIFIED || rec['Verification'] === 'Corrected'))
+      return { level: 'all', unchanged: true, verification: rec['Verification'], verifiedBy: rec['Last Updated By'], verifiedOn: rec['Last Updated On'] };
+    if (posting) listValue_('Verification', VERIFIED_POSTING);
     const by = stamp_(user, body.operator), when = new Date(), whenTxt = fmtTs_(when);
-    L.sh.getRange(rec._row, col('Verification')).setNumberFormat('@').setValue(VERIFIED);
+    L.sh.getRange(rec._row, col('Verification')).setNumberFormat('@').setValue(VAL);
     L.sh.getRange(rec._row, col('Last Updated By')).setNumberFormat('@').setValue(by);
     L.sh.getRange(rec._row, col('Last Updated On')).setNumberFormat('dd-mm-yyyy hh:mm').setValue(when);
     appendLog_([[id8_(), 'V' + Utilities.formatDate(when, CONFIG.TZ, 'yyMMdd-HHmmss'), now_(), user.email,
       (body.operator && body.operator.name) || user.name, (body.operator && body.operator.designation) || '', (body.operator && body.operator.mobile) || '',
-      code, 'Verify', rec[CONFIG.KEY], rec['Name'], rec['Circle'], rec['Division'], 'Verification', rec['Verification'], VERIFIED,
-      'Approved', now_(), 'Verified directly by operator']]);
+      code, 'Verify', rec[CONFIG.KEY], rec['Name'], rec['Circle'], rec['Division'], 'Verification', rec['Verification'], VAL,
+      'Approved', now_(), posting ? 'Posting and home district verified by operator' : 'Verified directly by operator']]);
     if (L.o) {
-      Object.assign(L.o.data, { Verification: VERIFIED, 'Last Updated By': by, 'Last Updated On': whenTxt });
-      if (!L.o.pending.length) L.o.status = 'verified';
+      Object.assign(L.o.data, { Verification: VAL, 'Last Updated By': by, 'Last Updated On': whenTxt });
+      if (!L.o.pending.length) L.o.status = posting ? 'partial' : 'verified';
       saveDiv_(rec['Circle'], rec['Division'], L.d);
     }
-    return { verifiedBy: by, verifiedOn: whenTxt };
+    return { level: posting ? 'posting' : 'all', verification: VAL, verifiedBy: by, verifiedOn: whenTxt };
   } finally { lock.releaseLock(); }
 }
 
@@ -448,6 +455,18 @@ function clean_(code, field, v, lists) {
   if (t === 'division' && !lists.circles.some(c => c.divisions.indexOf(v) >= 0)) throw new Error('Unknown division: ' + v);
   if (t === 'circle' && !lists.circles.some(c => c.circle === v)) throw new Error('Unknown circle: ' + v);
   return v;
+}
+
+/** Adds a value to a dropdown column on the Lists sheet if it is missing (so the Sheet's validation accepts it). Rechecked every few hours. */
+function listValue_(name, value) {
+  const C = CacheService.getScriptCache(), flag = 'list|' + name + '|' + value;
+  if (C.get(flag)) return;
+  const sh = sheet_(CONFIG.LISTS), v = sh.getDataRange().getValues(), c = v[0].map(x => String(x).trim()).indexOf(name);
+  if (c >= 0) {
+    const col = v.map(r => fmt_(r[c]));
+    if (col.indexOf(value) < 0) { let r = col.length; while (r > 1 && !col[r - 1]) r--; sh.getRange(r + 1, c + 1).setNumberFormat('@').setValue(value); }
+  }
+  C.put(flag, '1', CACHE_TTL);
 }
 
 function appendLog_(rows) {
@@ -578,7 +597,7 @@ function keepWarm() {
 /** Run once from the editor to authorise and check the sheet. */
 function setup() {
   Logger.log('Sheet: ' + ss_().getName());
-  readLists_(); logSheet_();
+  readLists_(); logSheet_(); listValue_('Verification', VERIFIED_POSTING);
   const all = buildAll_(); Logger.log('Cache ready: ' + Object.keys(all.divs).length + ' divisions');
   Object.keys(CADRES).forEach(c => Logger.log(c + ': ' + readSheet_(c).rows.length + ' officers'));
   const L = local_();

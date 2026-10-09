@@ -5,7 +5,8 @@
   const CADRES = [['FR', 'Forest Rangers'], ['DFR', 'Deputy Rangers / Foresters'], ['FG', 'Forest Guards & HFG']];
   const BANDS = [[0, 2, 'Under 2'], [2, 3, '2–3'], [3, 5, '3–5'], [5, 8, '5–8'], [8, 99, '8+']];
   const BASIS = { posting: 'Range / beat', division: 'Division', circle: 'Circle' };
-  const VER = { verified: 'Verified', corrected: 'Verified (corrected)', pending: 'Awaiting approval', unverified: 'Not verified' };
+  const VER = { verified: 'All verified', corrected: 'All verified (corrected)', partial: 'Posting verified only', pending: 'Awaiting approval', unverified: 'Not verified' };
+  const isFull = v => v === 'verified' || v === 'corrected';
   const HOME = { yes: 'Yes', no: 'No', unknown: 'Not known' };
   const MATCH = ['Matched', 'Matched (name differs)', 'Posting list shows other division', 'Not present in posting list', 'Not in Gradation List'];
   const EMPTY = { q: '', circle: '', division: '', ver: '', home: '', basis: 'posting', band: '', min: '', match: '', desig: '', retire: '', missing: '' };
@@ -43,7 +44,7 @@
     if (skip !== 'q' && f.q && !x.search.includes(f.q.toLowerCase())) return false;
     if (skip !== 'circle' && f.circle && d.Circle !== f.circle) return false;
     if (skip !== 'division' && skip !== 'circle' && f.division && d.Division !== f.division) return false;
-    if (skip !== 'ver' && f.ver && !(f.ver === 'anyverified' ? (x.ver === 'verified' || x.ver === 'corrected') : x.ver === f.ver)) return false;
+    if (skip !== 'ver' && f.ver && !(f.ver === 'anyverified' ? isFull(x.ver) : f.ver === 'anyposting' ? isFull(x.ver) || x.ver === 'partial' : x.ver === f.ver)) return false;
     if (skip !== 'home' && f.home && x.home !== f.home) return false;
     if (skip !== 'band' && f.band && !inBand(x[f.basis], f.band)) return false;
     if (skip !== 'min' && f.min !== '' && !(x[f.basis] != null && x[f.basis] >= Number(f.min))) return false;
@@ -132,7 +133,7 @@
           <label class="fs grow"><span>Search</span><input id="fq" placeholder="Name, HRMS ID, range, beat or remark" value="${A().esc(D.f.q)}"></label>
           <label class="fs"><span>Circle</span><select id="fcircle">${opt('', 'All circles', D.f.circle)}${circles.map(c => opt(c, c, D.f.circle)).join('')}</select></label>
           <label class="fs"><span>Division</span><select id="fdivision"></select></label>
-          <label class="fs"><span>Verification</span><select id="fver">${opt('', 'All', D.f.ver)}${opt('anyverified', 'Verified (any)', D.f.ver)}${Object.entries(VER).map(([k, l]) => opt(k, l, D.f.ver)).join('')}</select></label>
+          <label class="fs"><span>Verification</span><select id="fver">${opt('', 'All', D.f.ver)}${opt('anyverified', 'All verified (any)', D.f.ver)}${opt('anyposting', 'Posting verified (incl. all)', D.f.ver)}${Object.entries(VER).map(([k, l]) => opt(k, l, D.f.ver)).join('')}</select></label>
           <label class="fs"><span>Posted in home district</span><select id="fhome">${opt('', 'All', D.f.home)}${Object.entries(HOME).map(([k, l]) => opt(k, l, D.f.home)).join('')}</select></label>
         </div>
         <div class="frow">
@@ -173,14 +174,15 @@
 
   function kpis() {
     const v = view(), tot = all().length;
-    const c = { verified: 0, pending: 0, unverified: 0 }, home = { yes: 0 }; let over = 0, nip = 0;
+    const c = { verified: 0, partial: 0, pending: 0, unverified: 0 }, home = { yes: 0 }; let over = 0, nip = 0;
     v.forEach(o => { c[o.x.ver === 'corrected' ? 'verified' : o.x.ver]++; if (o.x.home === 'yes') home.yes++; if (o.x.posting != null && o.x.posting >= D.limit) over++;
       if (o.data['Posting List Match'] === 'Not present in posting list') nip++; });
     const card = (k, label, val, sub, cls, active) => `<button class="kpi dkpi ${cls}${active ? ' on' : ''}" data-k="${k}">
       <span>${label}</span><b>${n(val)}</b><small>${sub}</small><i class="kbar"><em style="width:${pct(val, v.length || 1)}%"></em></i></button>`;
     $('#kpis').innerHTML = [
       card('all', 'Officers in view', v.length, v.length === tot ? 'whole cadre' : `of ${n(tot)} in cadre`, 'ink', false),
-      card('verified', 'Verified', c.verified, pct(c.verified, v.length) + '% of view', 'good', D.f.ver === 'anyverified'),
+      card('verified', 'All details verified', c.verified, pct(c.verified, v.length) + '% of view', 'good', D.f.ver === 'anyverified'),
+      card('partial', 'Posting verified only', c.partial, pct(c.partial, v.length) + '% of view', 'blue', D.f.ver === 'partial'),
       card('pending', 'Awaiting approval', c.pending, pct(c.pending, v.length) + '% of view', 'violet', D.f.ver === 'pending'),
       card('unverified', 'Not verified', c.unverified, pct(c.unverified, v.length) + '% of view', 'muted', D.f.ver === 'unverified'),
       card('home', 'Posted in home district', home.yes, pct(home.yes, v.length) + '% of view', 'hot', D.f.home === 'yes'),
@@ -191,7 +193,7 @@
       const k = b.dataset.k, f = D.f;
       if (k === 'all') setF(Object.assign({}, EMPTY));
       if (k === 'verified') setF({ ver: f.ver === 'anyverified' ? '' : 'anyverified' });
-      if (k === 'pending' || k === 'unverified') setF({ ver: f.ver === k ? '' : k });
+      if (k === 'pending' || k === 'unverified' || k === 'partial') setF({ ver: f.ver === k ? '' : k });
       if (k === 'home') setF({ home: f.home === 'yes' ? '' : 'yes' });
       if (k === 'over') { const onNow = f.basis === 'posting' && String(f.min) === String(D.limit); setF({ basis: 'posting', min: onNow ? '' : String(D.limit), band: '' }); }
       if (k === 'nip') setF({ match: f.match === 'Not present in posting list' ? '' : 'Not present in posting list' });
@@ -201,13 +203,13 @@
   function charts() {
     const esc = A().esc;
     // 1. verification by circle
-    const byC = {}; view('circle').forEach(o => { const c = byC[o.data.Circle] = byC[o.data.Circle] || { v: 0, p: 0, u: 0, t: 0 }; c.t++; c[o.x.ver === 'pending' ? 'p' : o.x.ver === 'unverified' ? 'u' : 'v']++; });
+    const byC = {}; view('circle').forEach(o => { const c = byC[o.data.Circle] = byC[o.data.Circle] || { v: 0, h: 0, p: 0, u: 0, t: 0 }; c.t++; c[o.x.ver === 'pending' ? 'p' : o.x.ver === 'unverified' ? 'u' : o.x.ver === 'partial' ? 'h' : 'v']++; });
     const order = (A().S.meta.circles || []).map(c => c.circle);
     const cRows = Object.entries(byC).sort((a, b) => (order.indexOf(a[0]) + 1 || 99) - (order.indexOf(b[0]) + 1 || 99));
     const maxT = Math.max(1, ...cRows.map(r => r[1].t));
-    const circleChart = cRows.map(([c, x]) => `<button class="hrow${D.f.circle === c ? ' on' : ''}" data-circle="${esc(c)}" title="${esc(c)}: ${x.v} verified, ${x.p} awaiting, ${x.u} not verified">
+    const circleChart = cRows.map(([c, x]) => `<button class="hrow${D.f.circle === c ? ' on' : ''}" data-circle="${esc(c)}" title="${esc(c)}: ${x.v} all verified, ${x.h} posting verified, ${x.p} awaiting, ${x.u} not verified">
       <span class="hl">${esc(c)}</span><span class="hb"><span class="stack" style="width:${Math.max(4, x.t * 100 / maxT)}%">
-        <i class="sv" style="flex:${x.v}"></i><i class="sp" style="flex:${x.p}"></i><i class="su" style="flex:${x.u}"></i></span></span>
+        <i class="sv" style="flex:${x.v}"></i><i class="sh" style="flex:${x.h}"></i><i class="sp" style="flex:${x.p}"></i><i class="su" style="flex:${x.u}"></i></span></span>
       <span class="hn num">${pct(x.v, x.t)}%<small> · ${x.t}</small></span></button>`).join('') || '<p class="faint">No officers.</p>';
     // 2. tenure bands
     const vb = view('band'), bc = BANDS.map(b => vb.filter(o => inBand(o.x[D.f.basis], b[2])).length), unk = vb.filter(o => o.x[D.f.basis] == null).length, maxB = Math.max(1, ...bc);
@@ -230,7 +232,7 @@
         <span class="ab"><i class="au" style="width:${x.u * 100 / maxA}%"></i><i class="ah" style="width:${x.h * 100 / maxA}%"></i></span>
         <span class="an num">${x.u} <small>not verified</small> · ${x.h} <small>home</small></span></button>`).join('') || '<p class="faint">Nothing needs attention in this view.</p>';
     $('#charts').innerHTML = `
-      <div class="chart"><h3>Verification by circle</h3><div class="legend-s"><span class="lv">Verified</span><span class="lp">Awaiting</span><span class="lu">Not verified</span></div>${circleChart}</div>
+      <div class="chart"><h3>Verification by circle</h3><div class="legend-s"><span class="lv">All verified</span><span class="lh2">Posting only</span><span class="lp">Awaiting</span><span class="lu">Not verified</span></div>${circleChart}</div>
       <div class="chart"><h3>Tenure</h3>${tenureChart}</div>
       <div class="chart"><h3>Posted in home district</h3>${donut}</div>
       <div class="chart"><h3>Divisions needing attention</h3><div class="legend-s"><span class="lu2">Not verified</span><span class="lh">Home district</span></div>${attention}</div>`;
@@ -246,7 +248,7 @@
     if (f.q) out.push(['q', `Search: “${f.q}”`]);
     if (f.circle) out.push(['circle', `Circle: ${f.circle}`]);
     if (f.division) out.push(['division', `Division: ${f.division}`]);
-    if (f.ver) out.push(['ver', `Verification: ${f.ver === 'anyverified' ? 'Verified (any)' : VER[f.ver]}`]);
+    if (f.ver) out.push(['ver', `Verification: ${f.ver === 'anyverified' ? 'All verified (any)' : f.ver === 'anyposting' ? 'Posting verified (incl. all)' : VER[f.ver]}`]);
     if (f.home) out.push(['home', `Home district: ${HOME[f.home]}`]);
     if (f.band) out.push(['band', `${BASIS[f.basis]} tenure: ${f.band} yrs`]);
     if (f.min !== '') out.push(['min', `${BASIS[f.basis]} tenure ≥ ${f.min} yrs`]);
@@ -271,7 +273,7 @@
     ['range', 'Range / beat', o => (o.data['Present Range / Office'] || '') + (o.data['Present Beat'] || '')],
     ['rdist', 'Range district', o => o.data['District in which Range lies'] || ''], ['hdist', 'Home district', o => o.data['Home District'] || ''],
     ['posting', 'Yrs range / beat', o => o.x.posting], ['division', 'Yrs division', o => o.x.division], ['circleY', 'Yrs circle', o => o.x.circle],
-    ['ver', 'Verification', o => ({ verified: 1, corrected: 2, pending: 3, unverified: 4 })[o.x.ver]], ['match', 'Posting list', o => o.data['Posting List Match'] || ''],
+    ['ver', 'Verification', o => ({ verified: 1, corrected: 2, partial: 3, pending: 4, unverified: 5 })[o.x.ver]], ['match', 'Posting list', o => o.data['Posting List Match'] || ''],
   ];
   function sorted(list) {
     const c = COLS.find(x => x[0] === D.sort.k) || COLS[2], dir = D.sort.dir;
@@ -290,14 +292,14 @@
     $('#tbl').innerHTML = `<div class="tscroll"><table class="dtable"><thead><tr>${th}</tr></thead><tbody>${rows.map(o => {
       const d = o.data, x = o.x, k = o.cadre + '|' + o.id, same = x.home === 'yes';
       return `<tr data-k="${esc(k)}" tabindex="0">
-        <td><div class="tn">${esc(x.name)}${x.ver === 'verified' || x.ver === 'corrected' ? A().TICK : ''}</div><div class="faint num">${esc(o.id)}</div></td>
+        <td><div class="tn">${esc(x.name)}${isFull(x.ver) ? A().TICK : x.ver === 'partial' ? A().TICK_P : ''}</div><div class="faint num">${esc(o.id)}</div></td>
         <td><span class="tag">${esc(d.Designation || o.cadre)}</span></td>
         <td>${esc(d.Circle)}<div class="faint">${esc(d.Division)}</div></td>
         <td>${esc(d['Present Range / Office']) || '<span class="faint">—</span>'}${d['Present Beat'] ? `<div class="faint">${esc(d['Present Beat'])}</div>` : ''}</td>
         <td>${same ? `<span class="hd">${esc(d['District in which Range lies'])}</span>` : esc(d['District in which Range lies']) || '<span class="faint">—</span>'}</td>
         <td>${same ? `<span class="hd">${esc(d['Home District'])}</span>` : esc(d['Home District']) || '<span class="faint">—</span>'}</td>
         <td class="r">${yr(x.posting, true)}</td><td class="r">${yr(x.division)}</td><td class="r">${yr(x.circle)}</td>
-        <td><span class="pill ${x.ver === 'corrected' ? 'verified' : x.ver}">${VER[x.ver]}</span>${(x.ver === 'verified' || x.ver === 'corrected') && d['Last Updated By'] ? `<div class="faint vby">${esc(d['Last Updated By'].split(' · ')[0].replace(/\s*\(.*\)$/, ''))}${d['Last Updated On'] ? ' · ' + esc(d['Last Updated On'].slice(0, 10)) : ''}</div>` : ''}</td>
+        <td><span class="pill ${x.ver === 'corrected' ? 'verified' : x.ver}">${VER[x.ver]}</span>${(isFull(x.ver) || x.ver === 'partial') && d['Last Updated By'] ? `<div class="faint vby">${esc(d['Last Updated By'].split(' · ')[0].replace(/\s*\(.*\)$/, ''))}${d['Last Updated On'] ? ' · ' + esc(d['Last Updated On'].slice(0, 10)) : ''}</div>` : ''}</td>
         <td class="${d['Posting List Match'] === 'Not present in posting list' ? 'nip' : ''}">${esc(d['Posting List Match'] || '')}</td></tr>`;
     }).join('')}</tbody></table></div>
       <div class="tfoot"><span class="faint">Showing ${n(rows.length)} of ${n(list.length)} · click a row to open the profile · exports include every matching row</span>
@@ -337,14 +339,14 @@
     const list = sorted(view()); if (!list.length) return A().toast('Nothing to export.', true);
     const b = A().busy(`Preparing the report (${list.length} officers)…`, false, 'pdf');
     try {
-      const c = { verified: 0, pending: 0, unverified: 0 }; let home = 0, over = 0;
+      const c = { verified: 0, partial: 0, pending: 0, unverified: 0 }; let home = 0, over = 0;
       list.forEach(o => { c[o.x.ver === 'corrected' ? 'verified' : o.x.ver]++; if (o.x.home === 'yes') home++; if (o.x.posting != null && o.x.posting >= D.limit) over++; });
       const f1 = y => y == null ? '' : y.toFixed(1);
       const name = await PDF.report({
         title: CADRES.find(x => x[0] === D.cadre)[1] + ' · posting register',
         subtitle: `Data as of ${D.data[D.cadre].builtAt} · ${list.length} officers`,
         filters: filterLabels().map(x => x[1]).join('  ·  ') || 'none (whole cadre)',
-        kpis: [['Officers', list.length], ['Verified', c.verified, '#1d6b31'], ['Awaiting approval', c.pending, '#51308f'], ['Not verified', c.unverified, '#6b6a66'],
+        kpis: [['Officers', list.length], ['All verified', c.verified, '#1d6b31'], ['Posting verified only', c.partial, '#1f4f9e'], ['Awaiting approval', c.pending, '#51308f'], ['Not verified', c.unverified, '#6b6a66'],
           ['In home district', home, '#c4320a'], [`Over ${D.limit} yrs in range/beat`, over, '#8a4510']],
         columns: [{ label: '#', w: 16, num: true }, { label: 'Officer', w: 88, bold: true }, { label: 'HRMS ID', w: 54 }, { label: 'Desig.', w: 28 },
           { label: 'Circle', w: 48 }, { label: 'Division', w: 60 }, { label: 'Range / beat', w: '*' }, { label: 'Range district', w: 54 }, { label: 'Home district', w: 54 },

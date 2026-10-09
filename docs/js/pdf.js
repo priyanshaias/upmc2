@@ -4,7 +4,7 @@
   const C = { ink: '#191918', body: '#55534e', subtle: '#6b6a66', faint: '#8f8d88', line: '#ecebe8', border: '#e3e2df', muted: '#f6f5f4',
     sunken: '#f1f0ee', primary: '#0b66c3', green: '#1d6b31', greenSoft: '#dff3e2', violet: '#51308f', violetSoft: '#efe6fb',
     orange: '#8a4510', orangeTint: '#fdf1e5', mainsSoft: '#dfeafb', mainsInk: '#1f4f9e', ifosSoft: '#dcefea', ifosInk: '#155e4d' };
-  const STATUS = { verified: ['Verified', C.green, C.greenSoft], pending: ['Awaiting approval', C.violet, C.violetSoft],
+  const STATUS = { verified: ['All details verified', C.green, C.greenSoft], partial: ['Posting and home district verified', C.mainsInk, C.mainsSoft], pending: ['Awaiting approval', C.violet, C.violetSoft],
     unverified: ['Not verified', C.subtle, C.sunken] };
   const AVATAR = { FR: [C.mainsSoft, C.mainsInk], DFR: [C.ifosSoft, C.ifosInk], FG: [C.sunken, C.ink] };
 
@@ -81,7 +81,7 @@
   }
 
   function verifiedBy(o) {
-    const d = o.data, ok = d.Verification === 'Verified - All correct' || d.Verification === 'Corrected';
+    const d = o.data, full = d.Verification === 'Verified - All correct' || d.Verification === 'Corrected', ok = full || d.Verification === 'Verified - Posting and home district';
     const who = ok && d['Last Updated By'] ? d['Last Updated By'] : '';
     return {
       unbreakable: true, margin: [0, 14, 0, 0],
@@ -92,10 +92,13 @@
           { text: who ? who.split(' · ')[0] : 'Name and designation', fontSize: 9, color: who ? C.ink : C.faint, bold: !!who, margin: [0, 4, 0, 0] },
           { text: who ? (who.split(' · ')[1] || '') : '', fontSize: 8, color: C.subtle },
           { text: 'Date: ' + (ok && d['Last Updated On'] ? d['Last Updated On'] : '____________'), fontSize: 8.5, color: C.body, margin: [0, 3, 0, 0] },
+          ok ? { text: full ? 'Scope: all details (posting, home district, personal, service and status)' : 'Scope: posting and home district only. Other details not yet verified.',
+            fontSize: 8, italics: !full, color: full ? C.green : C.mainsInk, margin: [0, 3, 0, 0] } : '',
         ] },
         { width: 200, stack: [
           { text: 'Verification status', fontSize: 8, color: C.subtle, alignment: 'right' },
           { text: (STATUS[o.status] || STATUS.unverified)[0], bold: true, fontSize: 11, color: (STATUS[o.status] || STATUS.unverified)[1], alignment: 'right', margin: [0, 2, 0, 0] },
+          o.status === 'partial' ? { text: 'Personal, service and status details not yet verified', fontSize: 7.5, color: C.subtle, alignment: 'right', margin: [0, 2, 0, 0] } : '',
           o.pending && o.pending.length ? { text: `${o.pending.length} change(s) awaiting approval are not shown`, fontSize: 7.5, color: C.violet, alignment: 'right', margin: [0, 2, 0, 0] } : '',
         ] },
       ],
@@ -133,15 +136,15 @@
   async function division(list, schemaByCadre, circle, div, onProgress, opts) {
     opts = opts || {};
     const img = await emblemPng();
-    const counts = { verified: 0, pending: 0, unverified: 0 };
+    const counts = { verified: 0, partial: 0, pending: 0, unverified: 0 };
     list.forEach(o => counts[o.status] = (counts[o.status] || 0) + 1);
     const byCadre = {}; list.forEach(o => byCadre[o.cadre] = (byCadre[o.cadre] || 0) + 1);
     const cover = [
       ...header(img, opts.kicker || 'Division information sheets'),
       { text: opts.title || div, fontSize: 24, bold: true, color: C.ink, alignment: 'center', margin: [0, 6, 0, 2] },
       { text: opts.subtitle || `${circle} circle  ·  ${list.length} officers`, fontSize: 11, color: C.subtle, alignment: 'center', margin: [0, 0, 0, 16] },
-      { table: { widths: ['*', '*', '*', '*'], body: [[
-        ...[['Officers', list.length, C.ink], ['Verified', counts.verified, C.green], ['Awaiting approval', counts.pending, C.violet], ['Not verified', counts.unverified, C.subtle]]
+      { table: { widths: ['*', '*', '*', '*', '*'], body: [[
+        ...[['Officers', list.length, C.ink], ['All verified', counts.verified, C.green], ['Posting verified only', counts.partial, C.mainsInk], ['Awaiting approval', counts.pending, C.violet], ['Not verified', counts.unverified, C.subtle]]
           .map(([l, n, c]) => ({ stack: [{ text: l, fontSize: 8.5, color: C.subtle }, { text: String(n), fontSize: 20, bold: true, color: c }], margin: [10, 8, 10, 8] }))]] },
         layout: { hLineColor: () => C.border, vLineColor: () => C.border, hLineWidth: () => 0.8, vLineWidth: () => 0.8 }, margin: [0, 0, 0, 16] },
       { text: 'Index  ·  sheets follow in this order, one page each', bold: true, fontSize: 11, color: C.ink, margin: [0, 0, 0, 6] },

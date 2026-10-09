@@ -13,7 +13,10 @@
     send: '<svg viewBox="0 0 24 24"><path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7Z"/></svg>',
   };
   const S = { meta: null, div: null, filter: 'all', cadre: 'all', q: '', open: null, editSecs: new Set(), edits: {} };
-  const STATUS_TXT = { verified: 'Verified', pending: 'Awaiting approval', unverified: 'Not verified' };
+  const STATUS_TXT = { verified: 'All details verified', partial: 'Posting verified · rest pending', pending: 'Awaiting approval', unverified: 'Not verified' };
+  const V_ALL = 'Verified - All correct', V_POSTING = 'Verified - Posting and home district';
+  const fullyVerified = d => d.Verification === V_ALL || d.Verification === 'Corrected';
+  const postingVerified = d => fullyVerified(d) || d.Verification === V_POSTING;
 
   /* ---------------- small helpers ---------------- */
   const HELP = { name: 'Sudipta Kundu', office: 'Aranya Bhawan', phone: '+91 70442 30806', tel: '+917044230806' };
@@ -28,7 +31,7 @@
     'Tip: the download icon on each card gives that officer’s information sheet as a PDF.',
     'Tip: use the “Not verified” filter to see who is left in your division.',
     'Tip: changes you make go to the administrator for approval before they count.',
-    'Tip: a blue tick next to a name means the officer is verified.',
+    'Tip: a solid blue badge means all details are verified; an outline tick means only the posting and home district are.',
   ];
   const STEPS = {
     circles: ['Opening the PMC register…', 'Counting officers in every circle…', 'Checking what has been verified…', 'Almost there…'],
@@ -126,7 +129,8 @@
         <ol class="help-steps">
           <li><b>Choose your circle, then your division.</b> The ring shows how much is verified.</li>
           <li><b>Open each officer’s card.</b> Check the <b>Posting and home district</b> box first. It matters most.</li>
-          <li><b>All correct?</b> Press <b>Yes, verify · all correct</b>. A blue tick appears on the card.</li>
+          <li><b>Posting correct?</b> Press <b>Verify this section</b> in the Posting and home district box. An outline tick appears on the card.</li>
+          <li><b>Everything correct?</b> Press <b>Verify</b> at the bottom and choose <b>Verify all details</b>. A solid blue badge appears.</li>
           <li><b>Something wrong?</b> Press <b>Edit</b> next to that section, correct it and <b>Submit for approval</b>.</li>
           <li><b>Officer missing?</b> Use the <b>Add a …</b> card at the end of each cadre. The administrator approves new officers.</li>
           <li><b>Need a printout?</b> The download icon on a card gives that officer’s PDF. <b>Download all PDFs</b> gives the whole division.</li>
@@ -261,7 +265,7 @@
 
   /* ---------------- division: officer cards ---------------- */
   const FILTERS = [
-    ['all', 'All', () => true], ['unverified', 'Not verified', o => o.status === 'unverified'], ['verified', 'Verified', o => o.status === 'verified'],
+    ['all', 'All', () => true], ['unverified', 'Not verified', o => o.status === 'unverified'], ['partial', 'Posting verified', o => o.status === 'partial'], ['verified', 'All verified', o => o.status === 'verified'],
     ['pending', 'Awaiting approval', o => o.status === 'pending'], ['attn', 'Needs attention', o => FL.needsAttention(o.data)],
   ];
   const CADRE_TXT = { FR: 'Forest Rangers', DFR: 'Deputy Rangers / Foresters', FG: 'Forest Guards & HFG' };
@@ -287,14 +291,14 @@
 
   function drawDivision(flashId) {
     const D = S.div, list = D.officers;
-    const n = { verified: 0, pending: 0, unverified: 0 }; list.forEach(o => n[o.status]++);
+    const n = { verified: 0, partial: 0, pending: 0, unverified: 0 }; list.forEach(o => n[o.status]++);
     const cadres = ['FR', 'DFR', 'FG'].filter(c => list.some(o => o.cadre === c));
     app.innerHTML = `<div class="crumbs"><a href="#/circles">All circles</a><span class="sep">/</span><a href="#/c/${encodeURIComponent(D.circle)}">${esc(D.circle)}</a><span class="sep">/</span><span>${esc(D.division)}</span></div>
       <div class="head"><div><h1 class="page-title">${esc(D.division)}</h1><p class="page-sub">${esc(D.circle)} circle · ${list.length} officers. Open each card, check the details and verify.</p></div>
         <span class="sp"></span><button class="btn soft" id="allPdf" ${list.length ? '' : 'disabled'}>${icon.down} Download all PDFs</button></div>
-      <div class="progress"><div><div class="big">${n.verified} of ${list.length}</div><div class="faint">verified</div></div>
-        <div class="bar"><i class="v" style="width:${pct(n.verified, list.length)}%"></i><i class="p" style="width:${pct(n.pending, list.length)}%"></i></div>
-        <div class="legend"><span style="--c:var(--prelims)">Verified ${n.verified}</span><span style="--c:var(--interview)">Awaiting approval ${n.pending}</span><span style="--c:var(--border-strong)">Not verified ${n.unverified}</span></div></div>
+      <div class="progress"><div><div class="big">${n.verified} of ${list.length}</div><div class="faint">fully verified${n.partial ? ` · ${n.partial} posting only` : ''}</div></div>
+        <div class="bar"><i class="v" style="width:${pct(n.verified, list.length)}%"></i><i class="h" style="width:${pct(n.partial, list.length)}%"></i><i class="p" style="width:${pct(n.pending, list.length)}%"></i></div>
+        <div class="legend"><span style="--c:var(--prelims)">All verified ${n.verified}</span><span style="--c:#8fd19e">Posting verified ${n.partial}</span><span style="--c:var(--interview)">Awaiting approval ${n.pending}</span><span style="--c:var(--border-strong)">Not verified ${n.unverified}</span></div></div>
       <div class="toolbar">
         <div class="chips" id="fchips">${FILTERS.map(([k, l, f]) => `<button class="chip${S.filter === k ? ' on' : ''}" data-f="${k}">${l}<span class="n">${list.filter(f).length}</span></button>`).join('')}</div>
         ${cadres.length > 1 ? `<div class="chips" id="cchips"><button class="chip${S.cadre === 'all' ? ' on' : ''}" data-c="all">All cadres</button>${cadres.map(c => `<button class="chip${S.cadre === c ? ' on' : ''}" data-c="${c}">${c === 'FG' ? 'FG / HFG' : c}</button>`).join('')}</div>` : ''}
@@ -316,15 +320,18 @@
 
   // Instagram/Twitter-style verified badge
   const TICK = '<svg class="tick" viewBox="0 0 24 24" aria-label="Verified" role="img"><path fill="currentColor" d="M22.5 12.5c0-1.58-.875-2.95-2.148-3.6.154-.435.238-.905.238-1.4 0-2.21-1.71-3.998-3.818-3.998-.47 0-.92.084-1.336.25C14.818 2.415 13.51 1.5 12 1.5s-2.816.917-3.437 2.25c-.415-.165-.866-.25-1.336-.25-2.11 0-3.818 1.79-3.818 4 0 .494.083.964.237 1.4-1.272.65-2.147 2.018-2.147 3.6 0 1.495.782 2.798 1.942 3.486-.02.17-.032.34-.032.514 0 2.21 1.708 4 3.818 4 .47 0 .92-.086 1.335-.25.62 1.334 1.926 2.25 3.437 2.25 1.512 0 2.818-.916 3.437-2.25.415.163.865.248 1.336.248 2.11 0 3.818-1.79 3.818-4 0-.174-.012-.344-.033-.513 1.158-.687 1.943-1.99 1.943-3.484z"/><path fill="#fff" d="M10.6 16.3 6.9 12.6l1.4-1.4 2.3 2.3 5.1-5.1 1.4 1.4z"/></svg>';
+  // outline tick: only the posting and home district are verified
+  const TICK_P = '<svg class="tick" viewBox="0 0 24 24" aria-label="Posting and home district verified" role="img"><title>Posting and home district verified</title><circle cx="12" cy="12" r="9.2" fill="none" stroke="currentColor" stroke-width="2"/><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="m8 12.3 2.7 2.7L16.2 9.5"/></svg>';
+  const tickOf = o => o.status === 'verified' ? TICK : o.status === 'partial' ? TICK_P : '';
 
   function card(o, i) {
-    const d = o.data, attn = FL.needsAttention(d) && o.status !== 'verified';
+    const d = o.data, attn = FL.needsAttention(d) && o.status !== 'verified' && o.status !== 'partial';
     const rng = d['Present Range / Office'] || '', beat = d['Present Beat'] ? ' · ' + d['Present Beat'] : '';
     const k = esc(o.cadre + '|' + o.id);
     return `<div class="ocard" role="button" tabindex="0" data-k="${k}" style="animation-delay:${Math.min(i, 24) * 25}ms" aria-label="Open ${esc(FL.cleanName(d.Name))}">
       <button class="dl" data-dl="${k}" title="Download information sheet (PDF)" aria-label="Download PDF of ${esc(FL.cleanName(d.Name))}">${icon.down}</button>
       <div class="top"><div class="initials ${o.cadre}">${esc(FL.initials(d.Name))}</div>
-        <div><div class="nm">${esc(FL.cleanName(d.Name))}${o.status === 'verified' ? TICK : ''}</div><div class="id">HRMS ${esc(o.id)}</div></div></div>
+        <div><div class="nm">${esc(FL.cleanName(d.Name))}${tickOf(o)}</div><div class="id">HRMS ${esc(o.id)}</div></div></div>
       <div class="meta"><span class="tag">${esc(d.Designation || o.cadre)}</span> ${esc(rng + beat) || '<span class="faint">Range not recorded</span>'}</div>
       ${o.incoming ? `<div class="faint">From ${esc(o.from || '')}</div>` : ''}
       <div class="foot">${o.incoming ? '<span class="pill pending">Transfer in · awaiting approval</span>' : o.isNew ? '<span class="pill pending">New · awaiting approval</span>' : `<span class="pill ${o.status}">${STATUS_TXT[o.status]}</span>${attn ? '<span class="pill attn">Needs attention</span>' : ''}`}</div>
@@ -543,12 +550,14 @@
     const keepScroll = dlg.querySelector('.dbody') ? dlg.querySelector('.dbody').scrollTop : 0;
     const secHtml = s => {
       const on = S.editSecs.has(s.id), urgent = s.id === 'posting', canEdit = s.id !== 'reference' && !o.isNew && !o.isDraft && !o.incoming;
+      const secDone = urgent && !o.isDraft && postingVerified(d), secVer = urgent && canEdit && !editing() && !secDone;
       const req = f => o.isDraft && ADD_REQUIRED.includes(f) ? ' <span class="req">*</span>' : '';
       const rows = s.fields.map(f => `<div class="row${['Remarks', 'Posting List Remarks', 'Remarks in Gradation List'].includes(f) ? ' full' : ''}${S.edits.hasOwnProperty(f) && !o.isDraft ? ' chg' : ''}">
           <div class="k">${esc(FL.label(f))}${req(f)}</div>${on ? inputHtml(o, f, types[f]) : valueHtml(o, f)}</div>`).join('');
       return `<section class="sec${urgent ? ' urgent' : ''}${on ? ' editing' : ''}">
-        <div class="sec-h"><h3>${esc(s.title)}</h3>${urgent ? '<span class="urgent-tag">Check first</span>' : ''}<span class="sp"></span>
-          ${canEdit ? (on ? '<span class="editing-tag">Editing</span>' : `<button class="btn sm ghost sec-edit" data-sec="${s.id}">${icon.edit} Edit</button>`) : ''}</div>
+        <div class="sec-h"><h3>${esc(s.title)}</h3>${secDone ? '<span class="done-tag">' + icon.check + ' Verified</span>' : urgent ? '<span class="urgent-tag">Check first</span>' : ''}<span class="sp"></span>
+          ${canEdit ? (on ? '<span class="editing-tag">Editing</span>' : `<button class="btn sm ghost sec-edit" data-sec="${s.id}">${icon.edit} Edit</button>`) : ''}
+          ${secVer ? `<button class="btn sm sec-ver" id="secVer">${icon.check} Verify this section</button>` : ''}</div>
         ${urgent && !o.isDraft ? `${!on && attn.length ? `<div class="notice attn">${attn.map(esc).join('<br>')}</div>` : ''}
           <div class="summary">
             <div><b>${y(t.posting)}</b><span>${t.postingLabel.toLowerCase()}</span></div>
@@ -584,9 +593,9 @@
     }
     dlg.innerHTML = `
       <div class="dhead"><div class="initials ${o.cadre}">${esc(FL.initials(d.Name))}</div>
-        <div><h2>${esc(FL.cleanName(d.Name))}${o.status === 'verified' ? TICK : ''}</h2>
+        <div><h2>${esc(FL.cleanName(d.Name))}${tickOf(o)}</h2>
           <div class="sub"><b>${esc(d.Designation || o.cadre)}</b> · HRMS ID <b class="num">${esc(o.id)}</b> · ${esc(d.Division)}, ${esc(d.Circle)}</div>
-          <div class="pills"><span class="pill ${o.status}">${STATUS_TXT[o.status]}</span>${d['Last Updated By'] && o.status === 'verified' ? `<span class="faint" style="align-self:center">by ${esc(d['Last Updated By'].split(' · ')[0])} on ${esc(d['Last Updated On'])}</span>` : ''}</div></div>
+          <div class="pills"><span class="pill ${o.status}">${STATUS_TXT[o.status]}</span>${d['Last Updated By'] && (o.status === 'verified' || o.status === 'partial') ? `<span class="faint" style="align-self:center">by ${esc(d['Last Updated By'].split(' · ')[0])} on ${esc(d['Last Updated On'])}</span>` : ''}</div></div>
         <button class="x" id="dClose" aria-label="Close">×</button></div>
       <div class="dbody">
         ${editing() ? `<div class="notice info" style="margin-top:18px">Change only what is wrong. Your changes go to the administrator for approval.${S.edits.Division && S.edits.Division !== d.Division ? '<br><b>This is a transfer.</b> Also enter the date of joining the new division (Division date)' + (S.edits.Circle && S.edits.Circle !== d.Circle ? ' and the new circle (Circle date)' : '') + '.' : ''}</div>` : ''}
@@ -600,7 +609,13 @@
            <button class="btn" id="cancelEdit">Cancel</button><button class="btn primary" id="submitEdit" ${nChanged ? '' : 'disabled'}>${icon.send} Submit for approval</button>`
         : (o.isNew || o.incoming) ? `<span class="ask">Awaiting approval</span><span class="sp"></span><button class="btn" id="okClose">Close</button>`
         : `<span class="ask">Is everything correct?</span><span class="sp"></span>
-           <button class="btn good" id="verBtn">${icon.check} Yes, verify · all correct</button>`}</div>`;
+           <div class="vmenu-wrap">
+             <div class="vmenu" id="vmenu" role="menu" hidden>
+               <button role="menuitem" data-lv="posting" ${postingVerified(d) ? 'disabled' : ''}><span class="vi pin">${TICK_P}</span><span><b>Verify posting and home district only</b><small>${postingVerified(d) ? 'Already verified' : 'Range, district of range, home district, division, circle and dates'}</small></span></button>
+               <button role="menuitem" data-lv="all"><span class="vi all">${TICK}</span><span><b>Verify all details</b><small>Posting, home district, personal, service and status details</small></span></button>
+             </div>
+             <button class="btn good" id="verBtn" aria-haspopup="menu" aria-expanded="false">${icon.check} Verify <span class="caret">▾</span></button>
+           </div>`}</div>`;
     dlg.querySelector('.dbody').scrollTop = keepScroll;
     $('#dClose').onclick = () => closeProfile();
     dlg.querySelectorAll('.sec-edit').forEach(b => b.onclick = () => {
@@ -619,23 +634,31 @@
     } else if (o.isNew || o.incoming) {
       $('#okClose').onclick = () => closeProfile();
     } else {
-      $('#verBtn').onclick = () => verify(o);
+      const menu = $('#vmenu'), vb = $('#verBtn');
+      const shut = () => { menu.hidden = true; vb.setAttribute('aria-expanded', 'false'); };
+      vb.onclick = e => { e.stopPropagation(); menu.hidden = !menu.hidden; vb.setAttribute('aria-expanded', String(!menu.hidden)); };
+      dlg.onclick = e => { if (!menu.hidden && !e.target.closest('.vmenu-wrap')) shut(); };
+      menu.querySelectorAll('[data-lv]').forEach(b => b.onclick = () => { shut(); verify(o, b.dataset.lv); });
+      const sv = $('#secVer'); if (sv) sv.onclick = () => verify(o, 'posting');
     }
   }
 
-  async function verify(o) {
+  async function verify(o, level) {
+    level = level === 'posting' ? 'posting' : 'all';
     const mis = [];
     if (!o.data['Home District']) mis.push('home district');
     if (!o.data['District in which Range lies']) mis.push('district of the range');
     if (mis.length && !confirm(`The ${mis.join(' and ')} ${mis.length > 1 ? 'are' : 'is'} not recorded.\n\nPress Cancel and use Edit to fill ${mis.length > 1 ? 'them' : 'it'}, or OK to verify anyway.`)) return;
     const b = busy('Saving verification…', false, 'save');
     try {
-      const r = await guard(() => API.call('verify', { cadre: o.cadre, id: o.id, circle: o.data.Circle, division: o.data.Division, operator: op() }));
-      Object.assign(o.data, { Verification: 'Verified - All correct', 'Last Updated By': r.verifiedBy, 'Last Updated On': r.verifiedOn });
-      if (o.status !== 'pending') o.status = 'verified';
-      bumpCounts(o, 'verified');
+      const r = await guard(() => API.call('verify', { cadre: o.cadre, id: o.id, circle: o.data.Circle, division: o.data.Division, level, operator: op() }));
+      const full = r.level !== 'posting';
+      Object.assign(o.data, { Verification: r.verification || (full ? V_ALL : V_POSTING), 'Last Updated By': r.verifiedBy, 'Last Updated On': r.verifiedOn });
+      if (o.status !== 'pending') o.status = full ? 'verified' : 'partial';
+      bumpCounts(o);
       b.done(); closeProfile(true);
-      toast(`${FL.cleanName(o.data.Name)} verified.`);
+      toast(r.unchanged ? `${FL.cleanName(o.data.Name)}: all details were already verified.`
+        : full ? `${FL.cleanName(o.data.Name)}: all details verified.` : `${FL.cleanName(o.data.Name)}: posting and home district verified.`);
       (S.div.after || drawDivision)(o.cadre + '|' + o.id);
     } catch (e) { b.done(); }
   }
@@ -663,8 +686,8 @@
   function bumpCounts(o, to) {
     const c = S.meta && S.meta.counts && S.meta.counts[o.data.Circle + '|' + o.data.Division];
     if (!c || S.div.after) { if (S.meta) S.meta.stale = true; return; }
-    const n = { verified: 0, pending: 0 }; S.div.officers.forEach(x => { if (n[x.status] != null) n[x.status]++; });
-    c.verified = n.verified; c.pending = n.pending;
+    const n = { verified: 0, partial: 0, pending: 0 }; S.div.officers.forEach(x => { if (!x.incoming && n[x.status] != null) n[x.status]++; });
+    Object.assign(c, n);
   }
 
   async function pdfOne(o, quiet) {
@@ -745,7 +768,7 @@
     $('#aq').oninput = draw; draw();
   }
 
-  window.UPMC_APP = { S, esc, icon, busy, loaderHtml, animateLoader, toast, guard, openProfile, ensureMeta, TICK, STATUS_TXT, pdfOne };
+  window.UPMC_APP = { S, esc, icon, busy, loaderHtml, animateLoader, toast, guard, openProfile, ensureMeta, TICK, TICK_P, tickOf, STATUS_TXT, pdfOne };
 
   /* ---------------- router ---------------- */
   async function route() {

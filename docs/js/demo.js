@@ -25,6 +25,7 @@
     'Kalimpong', 'Kolkata', 'Malda', 'Murshidabad', 'Nadia', 'North 24 Parganas', 'Paschim Bardhaman', 'Paschim Medinipur', 'Purba Bardhaman',
     'Purba Medinipur', 'Purulia', 'South 24 Parganas', 'Uttar Dinajpur', 'Outside West Bengal'];
   const STATUS = ['Deceased', 'Retired', 'Absconding', 'Suspended', 'Others (write in Remarks)'];
+  const stOf = d => d.Verification === 'Verified - All correct' || d.Verification === 'Corrected' ? 'verified' : d.Verification === 'Verified - Posting and home district' ? 'partial' : 'unverified';
   const HEAD = {
     FR: ['Employee ID', 'Designation', 'Circle', 'Division', 'Name', 'Verification', 'Home District', 'Present Range / Office', 'District in which Range lies', 'Since when in this Range', 'Additional Charge of Range', 'Since when in A/charge', 'Deceased/Retired/Absconding etc', 'Remarks', 'Division Date', 'Circle Date', 'Posting List Match', 'Name in Posting List', 'Posting List: Circle / Division', 'Posting List Remarks', 'Home District (as in Gradation)', 'Qualification', 'Caste', 'RC', 'Date of Birth', 'Date of Retirement', 'Entry in Govt Service', 'Confirmation Date', 'Rank Date (as FR)', 'Training Batch', 'Remarks in Gradation List', 'Last Updated On', 'Last Updated By'],
     DFR: ['Employee ID', 'Designation', 'Circle', 'Division', 'Name', 'Verification', 'Home District', 'Present Range / Office', 'District in which Range lies', 'Present Beat', 'Since when in this Beat', "In charge of Range (name, else 'No')", 'Since when in charge of Range', 'Additional charge of Beat(s)', 'Since when in A/charge of Beat(s)', 'Deceased/Retired/Absconding etc', 'Remarks', 'Division Date', 'Circle Date', 'Posting List Match', 'Name in Posting List', 'Posting List: Circle / Division', 'Posting List Remarks', 'Home District (as in Gradation)', 'Qualification', 'Caste', 'RC', 'Date of Birth', 'Date of Retirement', 'Entry in Govt Service', 'Confirmation Date', 'Joined as DR/Fr', 'Training Batch', 'DR/Fr Training Batch', 'Remarks in Gradation List', 'Last Updated On', 'Last Updated By'],
@@ -70,7 +71,7 @@
         Object.assign(d, {
           'Employee ID': String(1990000000 + Math.floor(r() * 35) * 100000 + hash(key + n) % 99999),
           Designation: cadre === 'FR' ? 'FR' : cadre === 'DFR' ? 'DR/Fr' : (r() < .15 ? 'HFG' : 'FG'),
-          Circle: circle, Division: division, Name: name, Verification: r() < .25 ? 'Verified - All correct' : 'Pending',
+          Circle: circle, Division: division, Name: name, Verification: r() < .2 ? 'Verified - All correct' : r() < .15 ? 'Verified - Posting and home district' : 'Pending',
           'Home District': r() < .85 ? (r() < .3 ? home : pick(r, DISTRICTS.slice(0, 23))) : '',
           'Present Range / Office': r() < .9 ? pick(r, RANGES) : '', 'District in which Range lies': r() < .92 ? home : '',
           'Division Date': date(r, 2012, 2025), 'Circle Date': date(r, 2008, 2023),
@@ -90,7 +91,7 @@
         if (d['Posting List Match'] === 'Not present in posting list') { d['Present Range / Office'] = ''; d['Name in Posting List'] = ''; d['Posting List: Circle / Division'] = '';
           d.Remarks = 'Not present in posting list (29.08.2026) — no matching name found.'; }
         if (d.Verification !== 'Pending') { d['Last Updated By'] = 'Demo operator (Range Office) · demo@example.com'; d['Last Updated On'] = '02-10-2026 11:20'; }
-        list.push({ cadre, id: d['Employee ID'], data: d, pending: [], status: d.Verification === 'Pending' ? 'unverified' : 'verified' });
+        list.push({ cadre, id: d['Employee ID'], data: d, pending: [], status: stOf(d) });
       }
     });
     return (store[key] = list);
@@ -109,7 +110,7 @@
       const counts = {};
       CIRCLES.forEach(c => c.divisions.forEach(d => {
         const l = officers(c.circle, d);
-        counts[c.circle + '|' + d] = { total: l.length, verified: l.filter(o => o.status === 'verified').length, pending: l.filter(o => o.status === 'pending').length };
+        counts[c.circle + '|' + d] = { total: l.length, verified: l.filter(o => o.status === 'verified').length, partial: l.filter(o => o.status === 'partial').length, pending: l.filter(o => o.status === 'pending').length };
       }));
       return { user, circles: CIRCLES, districts: DISTRICTS, status: STATUS, counts,
         cadres: [{ code: 'FR', label: 'Forest Rangers', designations: ['FR'] }, { code: 'DFR', label: 'Deputy Rangers / Foresters', designations: ['DR/Fr'] },
@@ -121,9 +122,12 @@
     }
     if (action === 'verify') {
       const o = find(body.cadre, body.id), by = `${body.operator.name || user.name}${body.operator.designation ? ' (' + body.operator.designation + ')' : ''} · ${user.email}`;
-      Object.assign(o.data, { Verification: 'Verified - All correct', 'Last Updated By': by, 'Last Updated On': now() });
-      if (!o.pending.length) o.status = 'verified';
-      return { verifiedBy: by, verifiedOn: now() };
+      const posting = body.level === 'posting';
+      if (posting && stOf(o.data) === 'verified') return { level: 'all', unchanged: true, verification: o.data.Verification, verifiedBy: o.data['Last Updated By'], verifiedOn: o.data['Last Updated On'] };
+      const val = posting ? 'Verified - Posting and home district' : 'Verified - All correct';
+      Object.assign(o.data, { Verification: val, 'Last Updated By': by, 'Last Updated On': now() });
+      if (!o.pending.length) o.status = stOf(o.data);
+      return { level: posting ? 'posting' : 'all', verification: val, verifiedBy: by, verifiedOn: now() };
     }
     if (action === 'submit') {
       const o = find(body.cadre, body.id);
@@ -181,7 +185,7 @@
         if (body.decision === 'approve') { o.data[l.field] = l.newValue; o.data['Last Updated By'] = l.name + ' · ' + l.email; o.data['Last Updated On'] = now(); l.status = 'Approved'; applied++; }
         else { l.status = 'Rejected'; rejected++; }
         o.pending = o.pending.filter(p => !(p.field === l.field && p.value === l.newValue));
-        if (!o.pending.length) o.status = o.data.Verification === 'Pending' ? 'unverified' : 'verified';
+        if (!o.pending.length) o.status = stOf(o.data);
         if (l.field === 'Division' && body.decision === 'approve') relocate(o);
         if (l.field === 'Division' && body.decision !== 'approve') for (const k in store) store[k] = store[k].filter(x => !(x.incoming && x.id === o.id));
       });
