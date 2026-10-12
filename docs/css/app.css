@@ -416,6 +416,8 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--primary); 
 .addcard b { color: var(--ink); font-size: 15px; } .addcard small { font-size: 12.5px; max-width: 220px; }
 .initials.addav { background: var(--primary-soft); color: var(--link); }
 .req { color: var(--danger); font-weight: 800; }
+.bio .row.miss .k { color: var(--danger-ink); font-weight: 700; } .bio .row.miss input, .bio .row.miss select { border-color: var(--danger); background: #fff6f3; }
+.bio .row.miss .v.empty { color: var(--danger-ink); }
 /* ---------- help ---------- */
 .help-btn { min-height: 36px; padding: 0 12px; border-radius: var(--radius-pill); border: 1px solid var(--border); background: var(--surface); font-weight: 700; color: var(--text-strong); cursor: pointer; }
 .help-btn:hover { border-color: var(--primary); color: var(--link); }

@@ -14,6 +14,7 @@ GitHub Pages (docs/)  ──►  Apps Script API (apps-script/Code.gs)  ──�
 - **Verify** is saved straight away, at one of two levels:
   - **Posting and home district only:** use **Verify this section** in that box, or **Verify → Verify posting and home district only**. The Sheet records `Verified - Posting and home district` and the card gets an outline tick.
   - **All details:** use **Verify → Verify all details**. The Sheet records `Verified - All correct` and the card gets the solid blue badge. A posting-only verify never downgrades a full one.
+- **Required before verifying:** range, district of the range, division, home district, division date and range date (FR, FG). Any charge or beat that is filled needs its date too. The server checks this as well; a correction only marks an officer verified when these are complete.
 - **Edits** wait in the Change Log until an admin approves them on the **Approvals** screen.
 - The design follows the Acads-Notion design system. The emblem is the National Emblem of India, from Wikimedia Commons (public domain).
 

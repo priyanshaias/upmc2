@@ -518,7 +518,8 @@
   }
   async function submitAdd(o) {
     const data = Object.assign({ Circle: S.div.circle, Division: S.div.division }, S.edits);
-    const miss = ADD_REQUIRED.filter(f => !String(data[f] || '').trim());
+    const names = S.div.schema[o.cadre].map(f => f.name);
+    const miss = ADD_REQUIRED.filter(f => !String(data[f] || '').trim()).concat(FL.missing(data, names));
     if (miss.length) { toast('Please fill: ' + miss.map(FL.label).join(', '), true); return; }
     const b = busy('Sending the new officer for approval…', false, 'save');
     try {
@@ -541,24 +542,25 @@
       secs = secs.filter(x => x.id !== 'reference').map(x => Object.assign({}, x, { fields: x.fields.filter(f => !['Name', 'Designation', 'Circle', 'Division'].includes(f)) }));
       secs.unshift({ id: 'identity', title: 'Officer', fields: ['Employee ID', 'Name', 'Designation'] });
     }
+    const names = schema.map(f => f.name), view = Object.assign({}, d, S.edits);
+    const reqF = FL.requiredFields(view, names), miss = FL.missing(view, names);
     const attn = [];
     if (d['Posting List Match'] === 'Not present in posting list') attn.push('Not found in the posting list of 29.08.2026. Please confirm the present posting.');
-    if (!d['Home District']) attn.push('Home district is not recorded.');
-    if (!d['District in which Range lies']) attn.push('District of the present range is not recorded.');
+    if (miss.length && !o.isDraft) attn.push('<b>Fill before verifying:</b> ' + miss.map(f => esc(FL.label(f))).join(', ') + '.');
     const nChanged = Object.keys(S.edits).length;
     const dlg = $('#scrim .dialog');
     const keepScroll = dlg.querySelector('.dbody') ? dlg.querySelector('.dbody').scrollTop : 0;
     const secHtml = s => {
       const on = S.editSecs.has(s.id), urgent = s.id === 'posting', canEdit = s.id !== 'reference' && !o.isNew && !o.isDraft && !o.incoming;
       const secDone = urgent && !o.isDraft && postingVerified(d), secVer = urgent && canEdit && !editing() && !secDone;
-      const req = f => o.isDraft && ADD_REQUIRED.includes(f) ? ' <span class="req">*</span>' : '';
-      const rows = s.fields.map(f => `<div class="row${['Remarks', 'Posting List Remarks', 'Remarks in Gradation List'].includes(f) ? ' full' : ''}${S.edits.hasOwnProperty(f) && !o.isDraft ? ' chg' : ''}">
+      const req = f => (o.isDraft && ADD_REQUIRED.includes(f)) || reqF.includes(f) ? ' <span class="req" title="Required before verifying">*</span>' : '';
+      const rows = s.fields.map(f => `<div class="row${['Remarks', 'Posting List Remarks', 'Remarks in Gradation List'].includes(f) ? ' full' : ''}${S.edits.hasOwnProperty(f) && !o.isDraft ? ' chg' : ''}${miss.includes(f) && !o.isDraft ? ' miss' : ''}">
           <div class="k">${esc(FL.label(f))}${req(f)}</div>${on ? inputHtml(o, f, types[f]) : valueHtml(o, f)}</div>`).join('');
       return `<section class="sec${urgent ? ' urgent' : ''}${on ? ' editing' : ''}">
         <div class="sec-h"><h3>${esc(s.title)}</h3>${secDone ? '<span class="done-tag">' + icon.check + ' Verified</span>' : urgent ? '<span class="urgent-tag">Check first</span>' : ''}<span class="sp"></span>
           ${canEdit ? (on ? '<span class="editing-tag">Editing</span>' : `<button class="btn sm ghost sec-edit" data-sec="${s.id}">${icon.edit} Edit</button>`) : ''}
           ${secVer ? `<button class="btn sm sec-ver" id="secVer">${icon.check} Verify this section</button>` : ''}</div>
-        ${urgent && !o.isDraft ? `${!on && attn.length ? `<div class="notice attn">${attn.map(esc).join('<br>')}</div>` : ''}
+        ${urgent && !o.isDraft ? `${attn.length ? `<div class="notice attn">${attn.join('<br>')}</div>` : ''}
           <div class="summary">
             <div><b>${y(t.posting)}</b><span>${t.postingLabel.toLowerCase()}</span></div>
             <div><b>${y(t.division)}</b><span>in present division</span></div>
@@ -578,7 +580,7 @@
         <div class="notice info" style="margin-top:18px">Fill the officer’s details as on the service record. Fields marked * are needed. The officer is added after the administrator approves.</div>
         ${secs.map(secHtml).join('')}
       </div>
-      <div class="dfoot"><span class="ask">${ADD_REQUIRED.filter(f => !String(S.edits[f] || '').trim()).length ? 'Fill the fields marked *' : 'Ready to send'}</span><span class="sp"></span>
+      <div class="dfoot"><span class="ask">${ADD_REQUIRED.filter(f => !String(S.edits[f] || '').trim()).length || miss.length ? 'Fill the fields marked *' : 'Ready to send'}</span><span class="sp"></span>
         <button class="btn" id="cancelAdd">Cancel</button><button class="btn primary" id="submitAdd">${icon.send} Send for approval</button></div>`;
       dlg.querySelector('.dbody').scrollTop = keepScroll;
       $('#dClose').onclick = () => closeProfile();
@@ -645,10 +647,17 @@
 
   async function verify(o, level) {
     level = level === 'posting' ? 'posting' : 'all';
-    const mis = [];
-    if (!o.data['Home District']) mis.push('home district');
-    if (!o.data['District in which Range lies']) mis.push('district of the range');
-    if (mis.length && !confirm(`The ${mis.join(' and ')} ${mis.length > 1 ? 'are' : 'is'} not recorded.\n\nPress Cancel and use Edit to fill ${mis.length > 1 ? 'them' : 'it'}, or OK to verify anyway.`)) return;
+    const miss = FL.missing(o.data, S.div.schema[o.cadre].map(f => f.name));
+    if (miss.length) {   // required posting fields first: open the posting section for editing
+      const waiting = miss.filter(f => (o.pending || []).some(p => p.field === f && p.value));
+      toast(waiting.length === miss.length ? 'The missing fields are awaiting approval. Verify after the administrator approves them.'
+        : `Fill these before verifying: ${miss.map(FL.label).join(', ')}.`, true);
+      if (waiting.length < miss.length) {
+        S.editSecs.add('posting'); drawProfile();
+        const first = $(`#scrim [data-f="${CSS.escape(miss.find(f => !waiting.includes(f)))}"]`); first && first.focus();
+      }
+      return;
+    }
     const b = busy('Saving verification…', false, 'save');
     try {
       const r = await guard(() => API.call('verify', { cadre: o.cadre, id: o.id, circle: o.data.Circle, division: o.data.Division, level, operator: op() }));
@@ -671,7 +680,10 @@
       if (!S.edits['Division Date']) { toast('This is a transfer: enter the date of joining the new division (Division date).', true); return; }
       if (S.edits.Circle && S.edits.Circle !== o.data.Circle && !S.edits['Circle Date']) { toast('This is a transfer to another circle: enter the Circle date too.', true); return; }
     }
-    if (!changes.some(c => c.field === 'Verification')) changes.push({ field: 'Verification', value: 'Corrected' });
+    // a correction marks the officer verified only when every required field will be filled
+    const left = FL.missing(Object.assign({}, o.data, S.edits), S.div.schema[o.cadre].map(f => f.name));
+    if (left.length && !confirm(`Still blank: ${left.map(FL.label).join(', ')}.\n\nThe correction will be sent, but the officer stays not verified until these are filled. Send anyway?`)) return;
+    if (!left.length && !changes.some(c => c.field === 'Verification')) changes.push({ field: 'Verification', value: 'Corrected' });
     const b = busy('Sending for approval…', false, 'save');
     try {
       const r = await guard(() => API.call('submit', { cadre: o.cadre, id: o.id, circle: o.data.Circle, division: o.data.Division, changes, operator: op() }));
@@ -787,7 +799,7 @@
         const conflict = g.some(x => x.conflict);
         let note = '';
         if (!approve) { note = prompt('Reason for rejecting (optional):', '') ; if (note === null) return; }
-        else if (!confirm(`Approve ${g.length} change(s) for ${g[0].officer}?${conflict ? '\n\nSome values changed after this was sent. They will be overwritten.' : ''}`)) return;
+        else if (!confirm(`Approve ${g.length} change(s) for ${g[0].officer}?${conflict ? `\n\nThese will replace a different value now in the sheet:\n\n${conflictLines(g.filter(x => x.conflict))}` : ''}`)) return;
         const bz = busy(approve ? 'Writing to the master sheet…' : 'Rejecting…');
         try {
           const r = await guard(() => API.call('adminDecide', { ids: g.map(x => x.changeId), decision: approve ? 'approve' : 'reject', note, force: conflict }));
@@ -796,11 +808,12 @@
         } catch (e) { bz.done(); }
       });
     };
+    const conflictLines = list => list.slice(0, 8).map(x => `• ${x.officer} – ${FL.label(x.field)}: sheet has “${x.current || '(blank)'}”, change says “${x.newValue || '(blank)'}”`).join('\n') + (list.length > 8 ? `\n…and ${list.length - 8} more` : '');
     async function approveAll(pend) {
-      const nSub = new Set(pend.map(x => x.submissionId)).size, nCon = pend.filter(x => x.conflict).length;
+      const nSub = new Set(pend.map(x => x.submissionId)).size, con = pend.filter(x => x.conflict), nCon = con.length;
       if (!confirm(`Approve all ${pend.length} change(s) in ${nSub} submission(s)?\n\nThey will be written to the master sheet.`)) return;
       let force = false;
-      if (nCon) force = confirm(`${nCon} change(s) are for values that changed in the sheet after they were sent.\n\nOK: overwrite those too.\nCancel: skip them and approve the rest.`);
+      if (nCon) force = confirm(`${nCon} change(s) would replace a different value now in the sheet:\n\n${conflictLines(con)}\n\nOK: overwrite those too.\nCancel: skip them (they stay waiting) and approve the rest.`);
       // send whole submissions together, about 150 changes per call
       const bySub = {}; pend.forEach(x => (bySub[x.submissionId] = bySub[x.submissionId] || []).push(x.changeId));
       const batches = [[]]; Object.values(bySub).forEach(g => { if (batches[batches.length - 1].length + g.length > 150 && batches[batches.length - 1].length) batches.push([]); batches[batches.length - 1].push(...g); });

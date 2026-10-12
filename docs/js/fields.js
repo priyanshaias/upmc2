@@ -68,5 +68,25 @@
     return d['Posting List Match'] === 'Not present in posting list' || !d['Home District'] || !d['District in which Range lies'] || !d['Present Range / Office'];
   }
 
-  window.UPMC_FIELDS = { label, sections, tenure, fmtYears, initials, cleanName, needsAttention, toDate };
+  // Fields that must be filled before an officer can be verified (same rule as the server).
+  const REQUIRED = ['Present Range / Office', 'District in which Range lies', 'Division', 'Home District', 'Division Date', 'Since when in this Range'];
+  const PAIRS = [['Additional Charge of Range', 'Since when in A/charge'], ["In charge of Range (name, else 'No')", 'Since when in charge of Range'],
+    ['Additional charge of Beat(s)', 'Since when in A/charge of Beat(s)'], ['Camp / Checkpost (if any)', 'Since when in Camp / Checkpost'],
+    ['Present Beat', 'Since when in this Beat']];
+  const NONE = /^(no|none|nil|na|n\/a|-|–)?$/i;
+  // names = the fields this cadre has; returns the required fields that are blank in d
+  function missing(d, names) {
+    const has = f => names.includes(f), blank = f => !String(d[f] || '').trim();
+    const out = REQUIRED.filter(f => has(f) && blank(f));
+    PAIRS.forEach(([a, b]) => { if (has(a) && has(b) && !NONE.test(String(d[a] || '').trim()) && blank(b)) out.push(b); });
+    return out;
+  }
+  // fields that are required for this record as it stands (a charge date only once the charge is filled)
+  function requiredFields(d, names) {
+    const out = REQUIRED.filter(f => names.includes(f));
+    PAIRS.forEach(([a, b]) => { if (names.includes(a) && names.includes(b) && !NONE.test(String(d[a] || '').trim())) out.push(b); });
+    return out;
+  }
+
+  window.UPMC_FIELDS = { label, sections, tenure, fmtYears, initials, cleanName, needsAttention, toDate, missing, requiredFields };
 })();

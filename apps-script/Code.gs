@@ -26,6 +26,19 @@ const LOG_HEADERS = ['Change ID', 'Submission ID', 'Submitted On', 'Submitted By
   'Field', 'Old Value', 'New Value', 'Status', 'Reviewed On', 'Review Note'];
 const VERIFIED = 'Verified - All correct';
 const VERIFIED_POSTING = 'Verified - Posting and home district';   // only the posting section checked
+// Fields that must be filled before an officer can be verified (only those the cadre has).
+const REQUIRED = ['Present Range / Office', 'District in which Range lies', 'Division', 'Home District', 'Division Date', 'Since when in this Range'];
+// A charge or posting field that is filled needs its date too ("No", "Nil", "-" count as empty).
+const PAIRS = [['Additional Charge of Range', 'Since when in A/charge'], ["In charge of Range (name, else 'No')", 'Since when in charge of Range'],
+  ['Additional charge of Beat(s)', 'Since when in A/charge of Beat(s)'], ['Camp / Checkpost (if any)', 'Since when in Camp / Checkpost'],
+  ['Present Beat', 'Since when in this Beat']];
+const NONE_ = /^(no|none|nil|na|n\/a|-|–)?$/i;
+function missingFor_(d) {
+  const has = f => Object.prototype.hasOwnProperty.call(d, f), blank = f => !String(d[f] || '').trim();
+  const out = REQUIRED.filter(f => has(f) && blank(f));
+  PAIRS.forEach(([a, b]) => { if (has(a) && has(b) && !NONE_.test(String(d[a] || '').trim()) && blank(b)) out.push(b); });
+  return out;
+}
 const SESSION_HOURS = 6;          // password sessions last this long (Apps Script cache maximum)
 const MAX_FAILS = 5, LOCK_MIN = 15;
 
@@ -351,6 +364,8 @@ function verify_(body, user) {
     const L = locate_(code, body.id, body.circle, body.division), rec = L.rec, col = h => L.headers.indexOf(h) + 1;
     if (posting && (rec['Verification'] === VERIFIED || rec['Verification'] === 'Corrected'))
       return { level: 'all', unchanged: true, verification: rec['Verification'], verifiedBy: rec['Last Updated By'], verifiedOn: rec['Last Updated On'] };
+    const miss = missingFor_(rec);
+    if (miss.length) throw new Error('Fill these before verifying: ' + miss.join(', ') + '.');
     if (posting) listValue_('Verification', VERIFIED_POSTING);
     const by = stamp_(user, body.operator), when = new Date(), whenTxt = fmtTs_(when);
     L.sh.getRange(rec._row, col('Verification')).setNumberFormat('@').setValue(VAL);
@@ -389,6 +404,10 @@ function submit_(body, user) {
       rows.push([id8_(), sub, now_(), user.email, op.name || user.name, op.designation || '', op.mobile || '', code, 'Edit',
         rec[CONFIG.KEY], rec['Name'], rec['Circle'], rec['Division'], ch.field, rec[ch.field], nv, 'Pending', '', '']);
     });
+    // "Corrected" counts as verified, so it is kept only when the corrected record has every required field
+    const merged = Object.assign({}, rec); rows.forEach(r => merged[r[13]] = r[15]);
+    const incomplete = missingFor_(merged).length > 0;
+    if (incomplete) rows.splice(0, rows.length, ...rows.filter(r => r[13] !== 'Verification'));
     if (!rows.length) throw new Error('Nothing was changed.');
     const chg = f => rows.some(r => r[13] === f);
     if (chg('Division') && !chg('Division Date')) throw new Error('This is a transfer: enter the date of joining the new division (Division date).');
@@ -403,7 +422,7 @@ function submit_(body, user) {
         if (inc) saveDiv_(inc.circle, inc.division, inc.d);
       }
     }
-    return { submissionId: sub, count: rows.length };
+    return { submissionId: sub, count: rows.length, incomplete };
   } finally { lock.releaseLock(); }
 }
 
@@ -424,6 +443,10 @@ function addOfficer_(body, user) {
     const v = clean_(code, h, raw[h], lists);
     if (v) data[h] = v;
   });
+  // a new officer is added as verified, so the required posting fields must be there
+  const full = {}; headers.forEach(h => full[h] = data[h] || '');
+  const miss = missingFor_(full);
+  if (miss.length) throw new Error('Fill these first: ' + miss.join(', ') + '.');
   const lock = LockService.getScriptLock(); lock.waitLock(30000);
   try {
     // HRMS ID must be new: not in any cadre and not already proposed
@@ -520,7 +543,7 @@ function adminChanges_(body, log) {
     if (CADRES[o.cadre] && o.type !== 'Add') {
       const rec = current(o.cadre, o.id);
       o.current = rec ? rec[o.field] : '(record missing)';
-      o.conflict = o.status === 'Pending' && o.current !== o.oldValue;
+      o.conflict = o.status === 'Pending' && o.field !== 'Verification' && o.current !== o.oldValue && o.current !== o.newValue;
     }
     return o;
   });
@@ -566,8 +589,14 @@ function adminDecide_(body, user) {
         }
         const code = l['Cadre'], m = master(code), rec = m.index[l['Employee ID']];
         if (!rec) throw new Error('Officer not found ' + l['Employee ID']);
-        if (rec[l['Field']] !== l['Old Value'] && !body.force) {
-          res.conflicts.push({ officer: l['Name'], field: l['Field'], old: l['Old Value'], current: rec[l['Field']] }); return;
+        const cur = rec[l['Field']], isVer = l['Field'] === 'Verification';
+        // nothing to write: the sheet already has this value, or the officer is already fully verified
+        if (cur === l['New Value'] || (isVer && (cur === VERIFIED || cur === 'Corrected'))) {
+          mark(l, 'Approved', 'No change needed: the sheet already had this');
+          touch(code, l['Employee ID']); res.applied++; return;
+        }
+        if (!isVer && cur !== l['Old Value'] && !body.force) {
+          res.conflicts.push({ officer: l['Name'], field: l['Field'], old: l['Old Value'], current: cur, value: l['New Value'] }); return;
         }
         const sh = sheet_(CADRES[code].sheet), col = h => m.headers.indexOf(h) + 1;
         const cell = sh.getRange(rec._row, col(l['Field']));
