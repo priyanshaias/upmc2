@@ -10,7 +10,7 @@
   const HOME = { yes: 'Yes', no: 'No', unknown: 'Not known' };
   const MATCH = ['Matched', 'Matched (name differs)', 'Posting list shows other division', 'Not present in posting list', 'Not in Gradation List'];
   const EMPTY = { q: '', circle: '', division: '', ver: '', home: '', basis: 'posting', band: '', min: '', match: '', desig: '', retire: '', missing: '' };
-  const D = { cadre: 'FR', data: {}, loading: {}, f: Object.assign({}, EMPTY), limit: 3, sort: { k: 'circle', dir: 1 }, shown: 100 };
+  const D = { cadre: 'FR', data: {}, loading: {}, f: Object.assign({}, EMPTY), limit: 3, sort: { k: 'circle', dir: 1 }, shown: 100, by: 'circle', dsort: 'low' };
 
   /* ---------------- data ---------------- */
   const yrs = s => { const d = FL.toDate(s); return d ? Math.max(0, (Date.now() - d) / (365.25 * 864e5)) : null; };
@@ -66,6 +66,8 @@
     const p = new URLSearchParams(); p.set('c', D.cadre);
     Object.keys(D.f).forEach(k => { if (D.f[k] !== EMPTY[k]) p.set(k, D.f[k]); });
     if (D.limit !== 3) p.set('limit', D.limit);
+    if (D.by === 'division') p.set('by', 'division');
+    if (D.dsort !== 'low') p.set('dsort', D.dsort);
     history.replaceState(null, '', '#/dash?' + p.toString());
   }
   function readUrl() {
@@ -73,6 +75,8 @@
     D.cadre = ['FR', 'DFR', 'FG'].includes(q.get('c')) ? q.get('c') : D.cadre;
     D.f = Object.assign({}, EMPTY); Object.keys(EMPTY).forEach(k => { if (q.has(k)) D.f[k] = q.get(k); });
     if (q.has('limit')) D.limit = Number(q.get('limit')) || 3;
+    D.by = q.get('by') === 'division' ? 'division' : 'circle';
+    D.dsort = ['low', 'size', 'az'].includes(q.get('dsort')) ? q.get('dsort') : 'low';
   }
   function setF(patch) { Object.assign(D.f, patch); D.shown = 100; saveUrl(); syncControls(); drawDynamic(); }
 
@@ -211,6 +215,22 @@
       <span class="hl">${esc(c)}</span><span class="hb"><span class="stack" style="width:${Math.max(4, x.t * 100 / maxT)}%">
         <i class="sv" style="flex:${x.v}"></i><i class="sh" style="flex:${x.h}"></i><i class="sp" style="flex:${x.p}"></i><i class="su" style="flex:${x.u}"></i></span></span>
       <span class="hn num">${pct(x.v, x.t)}%<small> · ${x.t}</small></span></button>`).join('') || '<p class="faint">No officers.</p>';
+    // 1b. the same, division-wise (keeps the circle filter, so a chosen circle shows only its divisions)
+    let divChart = '';
+    if (D.by === 'division') {
+      const byDv = {}; view('division').forEach(o => { const k = o.data.Circle + '|' + o.data.Division, x = byDv[k] = byDv[k] || { c: o.data.Circle, d: o.data.Division, v: 0, h: 0, p: 0, u: 0, t: 0 }; x.t++; x[o.x.ver === 'pending' ? 'p' : o.x.ver === 'unverified' ? 'u' : o.x.ver === 'partial' ? 'h' : 'v']++; });
+      const dRows = Object.values(byDv).sort(D.dsort === 'size' ? (a, b) => b.t - a.t || a.d.localeCompare(b.d)
+        : D.dsort === 'az' ? (a, b) => a.d.localeCompare(b.d) || a.c.localeCompare(b.c)
+        : (a, b) => a.v / a.t - b.v / b.t || b.t - a.t);
+      const maxD = Math.max(1, ...dRows.map(x => x.t));
+      divChart = `<div class="dvlist">${dRows.map(x => `<button class="hrow dv${D.f.division === x.d && D.f.circle === x.c ? ' on' : ''}" data-dc="${esc(x.c)}" data-dd="${esc(x.d)}" title="${esc(x.d)}, ${esc(x.c)}: ${x.v} all verified, ${x.h} posting verified, ${x.p} awaiting, ${x.u} not verified">
+        <span class="hl"><b>${esc(x.d)}</b><small>${esc(x.c)}</small></span><span class="hb"><span class="stack" style="width:${Math.max(4, x.t * 100 / maxD)}%">
+          <i class="sv" style="flex:${x.v}"></i><i class="sh" style="flex:${x.h}"></i><i class="sp" style="flex:${x.p}"></i><i class="su" style="flex:${x.u}"></i></span></span>
+        <span class="hn num">${pct(x.v, x.t)}%<small> · ${x.t}</small></span></button>`).join('') || '<p class="faint">No officers.</p>'}</div>
+        <p class="faint dvcount">${dRows.length} division${dRows.length === 1 ? '' : 's'}${D.f.circle ? ' in ' + esc(D.f.circle) : ''}</p>`;
+    }
+    const byToggle = `<span class="seg" role="group" aria-label="Show by">${[['circle', 'Circle'], ['division', 'Division']].map(([k, l]) => `<button class="${D.by === k ? 'on' : ''}" data-by="${k}" aria-pressed="${D.by === k}">${l}</button>`).join('')}</span>`;
+    const dSortSel = D.by === 'division' ? `<select class="dsort" id="dsort" aria-label="Sort divisions">${[['low', 'Lowest % verified'], ['size', 'Most officers'], ['az', 'A–Z']].map(([k, l]) => `<option value="${k}"${D.dsort === k ? ' selected' : ''}>${l}</option>`).join('')}</select>` : '';
     // 2. tenure bands
     const vb = view('band'), bc = BANDS.map(b => vb.filter(o => inBand(o.x[D.f.basis], b[2])).length), unk = vb.filter(o => o.x[D.f.basis] == null).length, maxB = Math.max(1, ...bc);
     const tenureChart = `<div class="cols">${BANDS.map((b, i) => `<button class="col${D.f.band === b[2] ? ' on' : ''}${b[0] >= D.limit ? ' over' : ''}" data-band="${b[2]}" title="${bc[i]} officers">
@@ -232,7 +252,7 @@
         <span class="ab"><i class="au" style="width:${x.u * 100 / maxA}%"></i><i class="ah" style="width:${x.h * 100 / maxA}%"></i></span>
         <span class="an num">${x.u} <small>not verified</small> · ${x.h} <small>home</small></span></button>`).join('') || '<p class="faint">Nothing needs attention in this view.</p>';
     $('#charts').innerHTML = `
-      <div class="chart"><h3>Verification by circle</h3><div class="legend-s"><span class="lv">All verified</span><span class="lh2">Posting only</span><span class="lp">Awaiting</span><span class="lu">Not verified</span></div>${circleChart}</div>
+      <div class="chart"><div class="chart-h"><h3>Verification by ${D.by}</h3>${byToggle}</div><div class="legend-s"><span class="lv">All verified</span><span class="lh2">Posting only</span><span class="lp">Awaiting</span><span class="lu">Not verified</span></div>${dSortSel}${D.by === 'division' ? divChart : circleChart}</div>
       <div class="chart"><h3>Tenure</h3>${tenureChart}</div>
       <div class="chart"><h3>Posted in home district</h3>${donut}</div>
       <div class="chart"><h3>Divisions needing attention</h3><div class="legend-s"><span class="lu2">Not verified</span><span class="lh">Home district</span></div>${attention}</div>`;
@@ -241,6 +261,9 @@
     ch.querySelectorAll('[data-band]').forEach(b => b.onclick = () => setF({ band: D.f.band === b.dataset.band ? '' : b.dataset.band, min: '' }));
     ch.querySelectorAll('[data-home]').forEach(b => b.addEventListener('click', () => setF({ home: D.f.home === b.dataset.home ? '' : b.dataset.home })));
     ch.querySelectorAll('[data-d]').forEach(b => b.onclick = () => setF(D.f.division === b.dataset.d ? { division: '' } : { circle: b.dataset.c, division: b.dataset.d }));
+    ch.querySelectorAll('[data-by]').forEach(b => b.onclick = () => { if (D.by === b.dataset.by) return; D.by = b.dataset.by; saveUrl(); charts(); });
+    ch.querySelectorAll('[data-dd]').forEach(b => b.onclick = () => setF(D.f.division === b.dataset.dd && D.f.circle === b.dataset.dc ? { division: '' } : { circle: b.dataset.dc, division: b.dataset.dd }));
+    const ds = ch.querySelector('#dsort'); if (ds) ds.onchange = () => { D.dsort = ds.value; saveUrl(); charts(); };
   }
 
   function filterLabels() {
