@@ -25,6 +25,7 @@
     'Kalimpong', 'Kolkata', 'Malda', 'Murshidabad', 'Nadia', 'North 24 Parganas', 'Paschim Bardhaman', 'Paschim Medinipur', 'Purba Bardhaman',
     'Purba Medinipur', 'Purulia', 'South 24 Parganas', 'Uttar Dinajpur', 'Outside West Bengal'];
   const STATUS = ['Deceased', 'Retired', 'Absconding', 'Suspended', 'Others (write in Remarks)'];
+  const vlog = [];   // demo verifications, for the history view
   const stOf = d => d.Verification === 'Verified - All correct' || d.Verification === 'Corrected' ? 'verified' : d.Verification === 'Verified - Posting and home district' ? 'partial' : 'unverified';
   const HEAD = {
     FR: ['Employee ID', 'Designation', 'Circle', 'Division', 'Name', 'Verification', 'Home District', 'Present Range / Office', 'District in which Range lies', 'Since when in this Range', 'Additional Charge of Range', 'Since when in A/charge', 'Deceased/Retired/Absconding etc', 'Remarks', 'Division Date', 'Circle Date', 'Posting List Match', 'Name in Posting List', 'Posting List: Circle / Division', 'Posting List Remarks', 'Home District (as in Gradation)', 'Qualification', 'Caste', 'RC', 'Date of Birth', 'Date of Retirement', 'Entry in Govt Service', 'Confirmation Date', 'Rank Date (as FR)', 'Training Batch', 'Remarks in Gradation List', 'Last Updated On', 'Last Updated By'],
@@ -120,11 +121,25 @@
       const schema = {}; Object.keys(HEAD).forEach(c => schema[c] = HEAD[c].map(h => ({ name: h, type: typeOf(h) })));
       return { officers: JSON.parse(JSON.stringify(officers(body.circle, body.division))), schema };
     }
+    if (action === 'history') {
+      const o = find(body.cadre, body.id), ev = [];
+      if (/7$/.test(String(o.id)) && o.data['Home District']) ev.push({ id: 'h-' + o.id, sub: 'S-old-' + o.id, type: 'Edit', field: 'Home District', old: '', value: o.data['Home District'],
+        status: 'Approved', on: '25-09-2026 12:10', by: 'Demo operator', desig: 'Range Office', reviewedOn: '26-09-2026 10:02', note: 'Approved by the administrator', email: 'demo@example.com', mobile: '' });
+      const mine = vlog.filter(v => v.cadre === o.cadre && v.id === o.id);
+      if (!mine.length && o.data['Last Updated By'] && o.data.Verification !== 'Pending') ev.push({ id: 'v-' + o.id, sub: 'V-old-' + o.id, type: 'Verify', field: 'Verification', old: 'Pending', value: o.data.Verification,
+        status: 'Approved', on: o.data['Last Updated On'], by: o.data['Last Updated By'].split(' · ')[0], desig: '', reviewedOn: o.data['Last Updated On'], note: 'Verified directly by operator' });
+      mine.forEach(v => ev.push(v));
+      log.filter(l => l.cadre === o.cadre && l.id === o.id).forEach(l => ev.push({ id: l.changeId, sub: l.submissionId, type: l.type, field: l.field, old: l.oldValue, value: l.type === 'Add' ? '' : l.newValue,
+        status: l.status, on: l.on, by: l.name, desig: l.designation, reviewedOn: l.reviewedOn || '', note: l.note || '', email: l.email, mobile: l.mobile }));
+      return { events: ev };
+    }
     if (action === 'verify') {
       const o = find(body.cadre, body.id), by = `${body.operator.name || user.name}${body.operator.designation ? ' (' + body.operator.designation + ')' : ''} · ${user.email}`;
       const posting = body.level === 'posting';
       if (posting && stOf(o.data) === 'verified') return { level: 'all', unchanged: true, verification: o.data.Verification, verifiedBy: o.data['Last Updated By'], verifiedOn: o.data['Last Updated On'] };
       const val = posting ? 'Verified - Posting and home district' : 'Verified - All correct';
+      vlog.push({ id: o.id, sub: 'V-demo-' + Date.now(), cadre: o.cadre, type: 'Verify', field: 'Verification', old: o.data.Verification, value: val, status: 'Approved', on: now(),
+        by: body.operator.name || user.name, desig: body.operator.designation || '', reviewedOn: now(), note: posting ? 'Posting and home district verified by operator' : 'Verified directly by operator', email: user.email });
       Object.assign(o.data, { Verification: val, 'Last Updated By': by, 'Last Updated On': now() });
       if (!o.pending.length) o.status = stOf(o.data);
       return { level: posting ? 'posting' : 'all', verification: val, verifiedBy: by, verifiedOn: now() };
@@ -190,7 +205,7 @@
         if (l.field === 'Division' && body.decision === 'approve') relocate(o);
         if (l.field === 'Division' && body.decision !== 'approve') for (const k in store) store[k] = store[k].filter(x => !(x.incoming && x.id === o.id));
       });
-      const done = {}; log.forEach(l => { if (body.ids.includes(l.changeId) && l.status !== 'Pending') done[l.changeId] = l.status; });
+      const done = {}; log.forEach(l => { if (body.ids.includes(l.changeId) && l.status !== 'Pending') { done[l.changeId] = l.status; if (!l.reviewedOn) { l.reviewedOn = now(); l.note = body.note || (l.status === 'Approved' ? 'Approved by the administrator' : ''); } } });
       return { applied, rejected, conflicts: [], errors: [], done };
     }
     throw new Error('Unknown action ' + action);

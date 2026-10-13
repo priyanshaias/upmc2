@@ -368,17 +368,71 @@
 
   /* ---------------- profile dialog ---------------- */
   const findO = k => (k === '__add__' ? S.adding : S.div.officers.find(o => o.cadre + '|' + o.id === k));
+
+  /* ----- track changes: the officer's history from the Change Log, shown inline (red / green) and as a timeline ----- */
+  S.hist = {}; S.histField = null;
+  S.track = (() => { try { return localStorage.getItem('upmc_track') === '1'; } catch (e) { return false; } })();
+  const histOf = o => S.hist[o.cadre + '|' + o.id];
+  async function loadHist(o, force) {
+    const k = o.cadre + '|' + o.id, h = S.hist[k];
+    if (!force && h && (h.events || h.loading)) return;
+    S.hist[k] = { loading: true };
+    if (S.open === k) drawProfile();   // shows the snail while the history loads
+    try { const r = await API.call('history', { cadre: o.cadre, id: o.id }); S.hist[k] = { events: r.events || [] }; }
+    catch (e) { S.hist[k] = { error: e.message || 'Could not load the history.' }; }
+    if (S.open === k) drawProfile();
+  }
+  const fieldEdits = (o, f) => { const h = histOf(o); return h && h.events ? h.events.filter(e => e.type === 'Edit' && e.field === f && e.old !== e.value) : []; };
+  const SNAIL = `<svg class="snail-ld" viewBox="0 0 160 70" aria-hidden="true">
+      <line x1="10" y1="60" x2="150" y2="60" stroke="var(--border)" stroke-width="4" stroke-linecap="round"/>
+      <rect class="sn-trail" x="12" y="58" width="118" height="4" rx="2" fill="#9fd6f2"/>
+      <g class="sn-move"><path class="sn-foot" d="M4 60 C6 52 18 50 30 54 C34 56 36 58 37 60 Z" fill="#c5e1a5"/>
+        <g class="sn-st"><line x1="30" y1="54" x2="33" y2="40" stroke="#a5c886" stroke-width="2" stroke-linecap="round"/><circle cx="33" cy="39" r="2.4" fill="#191918"/></g>
+        <g class="sn-st"><line x1="27" y1="54" x2="26" y2="42" stroke="#a5c886" stroke-width="2" stroke-linecap="round"/><circle cx="26" cy="41" r="2.2" fill="#191918"/></g>
+        <circle cx="14" cy="46" r="13" fill="#e0a96d"/>
+        <path d="M14 46 m0 -2 a2 2 0 1 1 -2 2 a4 4 0 1 1 4 4 a6.5 6.5 0 1 1 -6.5 -6.5 a9 9 0 1 1 9 9" stroke="#a86d34" stroke-width="2" fill="none" stroke-linecap="round"/></g></svg>`;
+  const snailLoader = () => `<div class="snail-box">${SNAIL}<p>…slow and steady, loading changes</p></div>`;
+  const ST_PILL = { Approved: 'verified', Pending: 'pending', Rejected: 'attn' };
+  const ST_TXT = { Approved: 'Approved', Pending: 'Awaiting approval', Rejected: 'Rejected' };
+  const who = e => `${esc(e.by || 'Someone')}${e.desig ? ', ' + esc(e.desig) : ''}${e.email ? ` <span class="faint">· ${esc(e.email)}</span>` : ''}${e.mobile ? ` <span class="faint">· ${esc(e.mobile)}</span>` : ''}`;
+  const reviewTxt = e => e.status === 'Pending' ? '' : `${e.status === 'Rejected' ? 'Rejected' : 'Approved'}${e.reviewedOn ? ' on ' + esc(e.reviewedOn) : ''}${e.note && !/^(Approved|Rejected) by/.test(e.note) ? ' · “' + esc(e.note) + '”' : e.note ? ' · ' + esc(e.note.replace(/^(Approved|Rejected) /, '')) : ''}`;
+  function fieldCard(o, f) {
+    const ev = fieldEdits(o, f).slice().reverse();
+    return `<div class="row full hcard-row"><div class="hcard">${ev.map(e => `<div class="hc-item">
+        <div class="hc-ch"><del>${esc(e.old || '(blank)')}</del><span class="arr">→</span><ins class="${e.status === 'Pending' ? 'prop' : e.status === 'Rejected' ? 'rej' : ''}">${esc(e.value || '(blank)')}</ins>
+          <span class="pill ${ST_PILL[e.status] || 'pending'}">${ST_TXT[e.status] || esc(e.status)}</span></div>
+        <div class="hc-meta">Sent by ${who(e)} on ${esc(e.on)}</div>${reviewTxt(e) ? `<div class="hc-meta">${reviewTxt(e)}</div>` : ''}</div>`).join('')}</div></div>`;
+  }
+  function timelineHtml(o) {
+    const h = histOf(o);
+    if (!h || h.loading) return '';
+    if (h.error) return `<section class="sec hist"><div class="sec-h"><h3>History</h3></div><div class="notice attn">${esc(h.error)} <button class="btn sm" id="histRetry">Try again</button></div></section>`;
+    const evs = h.events.filter(e => !(e.type === 'Edit' && e.field === 'Verification'));
+    if (!evs.length) return `<section class="sec hist"><div class="sec-h"><h3>History</h3></div><p class="faint hist-empty">No changes or verifications through UPMC2 yet. The details are as in the register.</p></section>`;
+    const groups = []; evs.forEach(e => { const g = groups.find(x => x.sub === e.sub); g ? g.list.push(e) : groups.push({ sub: e.sub, list: [e] }); });
+    const line = e => {
+      if (e.type === 'Verify') return `<li class="tl-v">${/Posting/.test(e.value) ? TICK_P : TICK}<span><b>${/Posting/.test(e.value) ? 'Verified posting and home district' : 'Verified all details'}</b></span></li>`;
+      if (e.type === 'Add') return `<li><span><b>Added to the register as a new officer</b> <span class="pill ${ST_PILL[e.status] || 'pending'}">${ST_TXT[e.status] || esc(e.status)}</span></span></li>`;
+      return `<li><span><b>${esc(FL.label(e.field))}:</b> <del>${esc(e.old || '(blank)')}</del><span class="arr">→</span><ins class="${e.status === 'Pending' ? 'prop' : e.status === 'Rejected' ? 'rej' : ''}">${esc(e.value || '(blank)')}</ins>
+        <span class="pill ${ST_PILL[e.status] || 'pending'}">${ST_TXT[e.status] || esc(e.status)}</span></span></li>`;
+    };
+    return `<section class="sec hist"><div class="sec-h"><h3>History</h3><span class="faint">${evs.length} entr${evs.length === 1 ? 'y' : 'ies'}, newest first</span></div>
+      <ol class="timeline">${groups.reverse().map(g => { const f = g.list[0], rv = g.list.find(e => e.status !== 'Pending'); return `<li class="tl-g">
+        <div class="tl-h">${f.type === 'Verify' ? 'By' : f.type === 'Add' ? 'Sent by' : 'Correction sent by'} ${who(f)} <span class="faint">· ${esc(f.on)}</span></div>
+        <ul>${g.list.map(line).join('')}</ul>${rv && f.type !== 'Verify' && reviewTxt(rv) ? `<div class="tl-r">${reviewTxt(rv)}</div>` : ''}</li>`; }).join('')}</ol></section>`;
+  }
   const editing = () => S.editSecs.size > 0;
 
   function openProfile(k) {
     if (S.open || $('#scrim')) return;
-    S.open = k; S.editSecs = new Set(); S.edits = {};
+    S.open = k; S.editSecs = new Set(); S.edits = {}; S.histField = null;
     const el = document.createElement('div'); el.className = 'scrim'; el.id = 'scrim';
     el.innerHTML = '<div class="dialog" role="dialog" aria-modal="true"></div>';
     document.body.appendChild(el); document.body.style.overflow = 'hidden';
     el.addEventListener('click', e => { if (e.target === el) closeProfile(); });
     drawProfile();
     requestAnimationFrame(() => el.classList.add('on'));
+    if (S.track && k !== '__add__') { const o = findO(k); if (o) loadHist(o); }
   }
   function closeProfile(force) {
     const typed = Object.keys(S.edits).filter(k => !(S.adding && k === 'Designation')).length;
@@ -392,6 +446,15 @@
 
   function valueHtml(o, f) {
     const v = S.edits.hasOwnProperty(f) ? S.edits[f] : o.data[f];
+    if (S.track && !o.isDraft) {   // red = old, green = new; rejected changes stay in the timeline only
+      const ev = fieldEdits(o, f), pend = ev.filter(e => e.status === 'Pending').slice(-1)[0], appr = ev.filter(e => e.status === 'Approved').slice(-1)[0];
+      if (pend || appr) {
+        const n = ev.filter(e => e.status !== 'Rejected').length, open = S.histField === f;
+        const body = pend ? `<del>${esc(pend.old || '(blank)')}</del><ins class="prop">${esc(pend.value || '(blank)')}</ins><span class="tc-tag">awaiting approval</span>`
+          : `<del>${esc(appr.old || '(blank)')}</del><ins>${esc(v || '(blank)')}</ins>`;
+        return `<button class="v tc${open ? ' open' : ''}" data-hf="${esc(f)}" aria-expanded="${open}" title="Who changed this, and when">${body}<span class="tc-n">${n > 1 ? n + ' changes' : 'details'} ${open ? '▴' : '▾'}</span></button>`;
+      }
+    }
     const p = (o.pending || []).filter(x => x.field === f).slice(-1)[0];
     return `<div class="v${v ? '' : ' empty'}">${v ? esc(v) : 'Not recorded'}${p ? `<span class="pa">Awaiting approval: ${esc(p.value || '(blank)')}</span>` : ''}</div>`;
   }
@@ -555,9 +618,10 @@
       const secDone = urgent && !o.isDraft && postingVerified(d), secVer = urgent && canEdit && !editing() && !secDone;
       const req = f => (o.isDraft && ADD_REQUIRED.includes(f)) || reqF.includes(f) ? ' <span class="req" title="Required before verifying">*</span>' : '';
       const rows = s.fields.map(f => `<div class="row${['Remarks', 'Posting List Remarks', 'Remarks in Gradation List'].includes(f) ? ' full' : ''}${S.edits.hasOwnProperty(f) && !o.isDraft ? ' chg' : ''}${miss.includes(f) && !o.isDraft ? ' miss' : ''}">
-          <div class="k">${esc(FL.label(f))}${req(f)}</div>${on ? inputHtml(o, f, types[f]) : valueHtml(o, f)}</div>`).join('');
+          <div class="k">${esc(FL.label(f))}${req(f)}</div>${on ? inputHtml(o, f, types[f]) : valueHtml(o, f)}</div>${!on && S.track && S.histField === f ? fieldCard(o, f) : ''}`).join('');
+      const nTc = S.track && !o.isDraft ? s.fields.filter(f => fieldEdits(o, f).some(e => e.status !== 'Rejected')).length : 0;
       return `<section class="sec${urgent ? ' urgent' : ''}${on ? ' editing' : ''}">
-        <div class="sec-h"><h3>${esc(s.title)}</h3>${secDone ? '<span class="done-tag">' + icon.check + ' Verified</span>' : urgent ? '<span class="urgent-tag">Check first</span>' : ''}<span class="sp"></span>
+        <div class="sec-h"><h3>${esc(s.title)}</h3>${nTc ? `<span class="tc-count">${nTc} changed</span>` : ''}${secDone ? '<span class="done-tag">' + icon.check + ' Verified</span>' : urgent ? '<span class="urgent-tag">Check first</span>' : ''}<span class="sp"></span>
           ${canEdit ? (on ? '<span class="editing-tag">Editing</span>' : `<button class="btn sm ghost sec-edit" data-sec="${s.id}">${icon.edit} Edit</button>`) : ''}
           ${secVer ? `<button class="btn sm sec-ver" id="secVer">${icon.check} Verify this section</button>` : ''}</div>
         ${urgent && !o.isDraft ? `${attn.length ? `<div class="notice attn">${attn.join('<br>')}</div>` : ''}
@@ -597,14 +661,18 @@
       <div class="dhead"><div class="initials ${o.cadre}">${esc(FL.initials(d.Name))}</div>
         <div><h2>${esc(FL.cleanName(d.Name))}${tickOf(o)}</h2>
           <div class="sub"><b>${esc(d.Designation || o.cadre)}</b> · HRMS ID <b class="num">${esc(o.id)}</b> · ${esc(d.Division)}, ${esc(d.Circle)}</div>
-          <div class="pills"><span class="pill ${o.status}">${STATUS_TXT[o.status]}</span>${d['Last Updated By'] && (o.status === 'verified' || o.status === 'partial') ? `<span class="faint" style="align-self:center">by ${esc(d['Last Updated By'].split(' · ')[0])} on ${esc(d['Last Updated On'])}</span>` : ''}</div></div>
+          <div class="pills"><span class="pill ${o.status}">${STATUS_TXT[o.status]}</span>${d['Last Updated By'] && (o.status === 'verified' || o.status === 'partial') ? `<span class="faint" style="align-self:center">by ${esc(d['Last Updated By'].split(' · ')[0])} on ${esc(d['Last Updated On'])}</span>` : ''}
+            <button class="tc-switch${S.track ? ' on' : ''}" id="tcSwitch" role="switch" aria-checked="${S.track}"><span class="knob" aria-hidden="true"></span>Track changes</button></div></div>
         <button class="x" id="dClose" aria-label="Close">×</button></div>
       <div class="dbody">
         ${editing() ? `<div class="notice info" style="margin-top:18px">Change only what is wrong. Your changes go to the administrator for approval.${S.edits.Division && S.edits.Division !== d.Division ? '<br><b>This is a transfer.</b> Also enter the date of joining the new division (Division date)' + (S.edits.Circle && S.edits.Circle !== d.Circle ? ' and the new circle (Circle date)' : '') + '.' : ''}</div>` : ''}
         ${o.incoming ? `<div class="notice pend">Transfer from ${esc(o.from || 'another division')} has been requested and is waiting for the administrator’s approval. The details below are the proposed ones.</div>`
           : o.isNew ? '<div class="notice pend">This officer was added by a division and is waiting for the administrator’s approval. It can be verified or edited after approval.</div>'
           : (!editing() && (o.pending || []).length ? `<div class="notice pend">${o.pending.length} change(s) sent earlier are waiting for approval.</div>` : '')}
+        ${S.track && (histOf(o) || {}).loading ? snailLoader() : ''}
+        ${S.track && (histOf(o) || {}).events ? '<div class="tc-legend"><del>old</del><ins>new</ins><span>Click a changed value to see who changed it and when. Rejected changes are in the History at the end.</span></div>' : ''}
         ${secs.map(secHtml).join('')}
+        ${S.track ? timelineHtml(o) : ''}
       </div>
       <div class="dfoot">${editing()
         ? `<span class="ask">${nChanged ? `${nChanged} field${nChanged > 1 ? 's' : ''} changed` : 'Make your changes above'}</span><span class="sp"></span>
@@ -620,6 +688,13 @@
            </div>`}</div>`;
     dlg.querySelector('.dbody').scrollTop = keepScroll;
     $('#dClose').onclick = () => closeProfile();
+    $('#tcSwitch').onclick = () => {
+      S.track = !S.track; S.histField = null;
+      try { localStorage.setItem('upmc_track', S.track ? '1' : '0'); } catch (e) {}
+      drawProfile(); if (S.track) loadHist(o);
+    };
+    dlg.querySelectorAll('[data-hf]').forEach(b => b.onclick = () => { S.histField = S.histField === b.dataset.hf ? null : b.dataset.hf; drawProfile(); });
+    const hr = $('#histRetry'); if (hr) hr.onclick = () => loadHist(o, true);
     dlg.querySelectorAll('.sec-edit').forEach(b => b.onclick = () => {
       S.editSecs.add(b.dataset.sec); drawProfile();
       const first = $(`#scrim section.editing [data-f]`); first && first.focus({ preventScroll: true });
@@ -664,6 +739,7 @@
       const full = r.level !== 'posting';
       Object.assign(o.data, { Verification: r.verification || (full ? V_ALL : V_POSTING), 'Last Updated By': r.verifiedBy, 'Last Updated On': r.verifiedOn });
       if (o.status !== 'pending') o.status = full ? 'verified' : 'partial';
+      delete S.hist[o.cadre + '|' + o.id];
       bumpCounts(o);
       b.done(); closeProfile(true);
       toast(r.unchanged ? `${FL.cleanName(o.data.Name)}: all details were already verified.`
@@ -688,7 +764,7 @@
     try {
       const r = await guard(() => API.call('submit', { cadre: o.cadre, id: o.id, circle: o.data.Circle, division: o.data.Division, changes, operator: op() }));
       o.pending = (o.pending || []).concat(changes.map(c => ({ field: c.field, value: c.value, by: (op() || {}).name, on: 'now' })));
-      o.status = 'pending'; bumpCounts(o, 'pending');
+      o.status = 'pending'; bumpCounts(o, 'pending'); delete S.hist[o.cadre + '|' + o.id];
       b.done(); S.edits = {}; S.editSecs = new Set(); closeProfile(true);
       toast(`Sent for approval (${r.count} change${r.count > 1 ? 's' : ''}).`);
       (S.div.after || drawDivision)(o.cadre + '|' + o.id);

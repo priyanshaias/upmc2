@@ -62,7 +62,7 @@ function doPost(e) {
     if (body.action === 'logout') { logout_(body.token); return json_({ ok: true, data: {} }); }
     const user = authenticate_(body.token);
     const handlers = {
-      meta: meta_, division: division_, verify: verify_, submit: submit_, addOfficer: addOfficer_, search: search_,
+      meta: meta_, division: division_, verify: verify_, submit: submit_, addOfficer: addOfficer_, search: search_, history: history_,
       adminSummary: adminSummary_, adminChanges: adminChanges_, adminQueue: adminQueue_, adminDecide: adminDecide_, adminRefresh: adminRefresh_, adminData: adminData_,
     };
     const fn = handlers[body.action];
@@ -382,6 +382,24 @@ function verify_(body, user) {
     }
     return { level: posting ? 'posting' : 'all', verification: VAL, verifiedBy: by, verifiedOn: whenTxt };
   } finally { lock.releaseLock(); }
+}
+
+/** One officer's history from the Change Log (read only), oldest first.
+ * Everyone sees what changed, by whom (name, designation) and when; email, mobile and approver emails only reach admins. */
+function history_(body, user) {
+  const code = body.cadre; cadre_(code);
+  const id = String(body.id || '').trim();
+  if (!id) throw new Error('Officer is missing.');
+  // approver notes carry the admin's login ("Approved by grv (password login)"); operators see a neutral wording
+  const hide = s => user.isAdmin ? s : String(s || '').replace(/^(Approved|Rejected) by .*$/, '$1 by the administrator').replace(/[^\s@]+@[^\s@]+/g, 'the administrator');
+  const events = readLog_().rows.filter(l => l['Cadre'] === code && String(l['Employee ID']) === id).map(l => {
+    const e = { id: l['Change ID'], sub: l['Submission ID'], type: l['Type'], field: l['Field'], old: l['Old Value'],
+      value: l['Type'] === 'Add' ? '' : l['New Value'], status: l['Status'], on: l['Submitted On'], by: l['Submitter Name'],
+      desig: l['Submitter Designation'], circle: l['Circle'], division: l['Division'], reviewedOn: l['Reviewed On'], note: hide(l['Review Note']) };
+    if (user.isAdmin) { e.email = l['Submitted By (email)']; e.mobile = l['Submitter Mobile']; }
+    return e;
+  });
+  return { events };
 }
 
 /** Proposes edits; they wait for admin approval. */
