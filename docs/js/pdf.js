@@ -190,13 +190,14 @@
     const cols = r.columns;
     const body = [cols.map(c => ({ text: c.label, bold: true, fontSize: 7.5, color: '#ffffff', fillColor: C.ink, margin: [3, 3, 3, 3], alignment: c.num ? 'right' : 'left' }))];
     r.rows.forEach(row => body.push(cols.map((c, i) => {
-      const v = row[i], cell = { text: v == null || v === '' ? '—' : String(v), fontSize: 7.5, color: v === '' || v == null ? C.faint : C.ink, margin: [3, 2.5, 3, 2.5], alignment: c.num ? 'right' : 'left' };
+      const v = row[i], cell = { text: v == null || v === '' ? (c.blank ? '' : '—') : String(v), fontSize: 7.5, color: v === '' || v == null ? C.faint : C.ink, margin: c.tall ? [3, 6, 3, 6] : [3, 2.5, 3, 2.5], alignment: c.num ? 'right' : 'left' };   // blank: leave empty cells empty; tall: room to write
       if (c.warn && c.warn(row)) Object.assign(cell, { color: C.orange, bold: true });
       if (c.bold) cell.bold = true;
+      if (row._bold) Object.assign(cell, { bold: true, fillColor: '#eef2f7' });   // optional: subtotal rows
       return cell;
     })));
     const content = [...head, { table: { headerRows: 1, widths: cols.map(c => c.w || 'auto'), body },
-      layout: { hLineWidth: (i) => i < 2 ? 0 : 0.4, vLineWidth: () => 0, hLineColor: () => C.line, fillColor: (i) => i > 0 && i % 2 === 0 ? '#fbfbfa' : null } }];
+      layout: { hLineWidth: (i) => i < 2 ? 0 : 0.4, vLineWidth: () => 0, hLineColor: () => C.line, fillColor: (i) => i > 0 && i % 2 === 0 ? '#fbfbfa' : null } }, ...(r.after || [])];
     const dd = doc(content, 'UPMC2 · ' + r.title);
     dd.pageOrientation = 'landscape'; dd.pageMargins = [40, 30, 40, 40];
     await new Promise(res => window.pdfMake.createPdf(dd).download(r.fileName, res));

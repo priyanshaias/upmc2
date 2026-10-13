@@ -92,12 +92,12 @@
     if (!u) { $('#who').innerHTML = ''; return; }
     const o = op();
     const admin = S.meta && S.meta.user && S.meta.user.isAdmin;
-    $('#who').innerHTML = `${admin ? '<a class="btn sm ghost hide-sm" href="#/dash">Dashboard</a><a class="btn sm ghost hide-sm" href="#/admin">Approvals</a>' : ''}
+    $('#who').innerHTML = `${admin ? '<a class="btn sm ghost hide-sm" href="#/dash">Dashboard</a><a class="btn sm ghost hide-sm" href="#/report">Reports</a><a class="btn sm ghost hide-sm" href="#/admin">Approvals</a>' : ''}
       <button class="menu-btn" id="menuBtn" aria-haspopup="true" aria-expanded="false" title="${esc(u.email)}">
         <span class="av">${esc(FL.initials(o && o.name || u.name))}</span><span class="hide-sm">${esc(o && o.name || u.name)}</span><span aria-hidden="true">▾</span></button>
       <div class="menu hidden" id="menu" role="menu">
         <div class="menu-who"><b>${esc(o && o.name || u.name)}</b><span>${esc(u.email)}</span></div>
-        ${admin ? '<a role="menuitem" href="#/dash">Dashboard</a><a role="menuitem" href="#/admin">Approvals</a>' : ''}
+        ${admin ? '<a role="menuitem" href="#/dash">Dashboard</a><a role="menuitem" href="#/report">Reports</a><a role="menuitem" href="#/admin">Approvals</a>' : ''}
         <a role="menuitem" href="#/circles">All circles</a>
         <button role="menuitem" id="meBtn">My details</button>
         <button role="menuitem" id="outBtn">Sign out</button>
@@ -844,6 +844,7 @@
       else if (parts[0] === 'd' && parts[2]) await renderDivision(parts[1], parts[2]);
       else if (parts[0] === 'admin') await renderAdmin();
       else if (parts[0] === 'dash') { await ensureMeta(); await window.UPMC_DASH.render(app); }
+      else if (parts[0] === 'report') { await ensureMeta(); await window.UPMC_REPORT.render(app); }
       else await renderCircles();
     } catch (e) { /* toast already shown */ }
     window.scrollTo(0, 0);
