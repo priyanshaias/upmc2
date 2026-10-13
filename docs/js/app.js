@@ -831,7 +831,7 @@
     $('#aq').oninput = draw; draw();
   }
 
-  window.UPMC_APP = { S, esc, icon, busy, loaderHtml, animateLoader, toast, guard, openProfile, ensureMeta, TICK, TICK_P, tickOf, STATUS_TXT, pdfOne };
+  window.UPMC_APP = { S, esc, icon, busy, loaderHtml, animateLoader, toast, guard, openProfile, ensureMeta, TICK, TICK_P, tickOf, STATUS_TXT, pdfOne, smallDialog };
 
   /* ---------------- router ---------------- */
   async function route() {

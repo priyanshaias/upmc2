@@ -126,7 +126,6 @@
         <label class="fs"><span>Arrange</span><select id="rGroup">${opt(GROUPS, R.group)}</select></label>
         <label class="fs"><span>Sort by</span><select id="rSort">${opt(SORTS, R.sort)}</select></label>
         <label class="rchk"><input type="checkbox" id="rOnly"${R.only ? ' checked' : ''}> Only divisions with work pending</label>
-        <label class="rchk"><input type="checkbox" id="rNames"${R.names ? ' checked' : ''}> Add officer names to the PDF</label>
         <span class="sp"></span><span id="rFold"></span>
       </div>
       <div id="rBody">${A().loaderHtml('admin', 'Loading all three cadres…')}</div></div>`;
@@ -135,7 +134,6 @@
     $('#rGroup').onchange = e => { R.group = e.target.value; saveUrl(); draw(); };
     $('#rSort').onchange = e => { R.sort = e.target.value; saveUrl(); draw(); };
     $('#rOnly').onchange = e => { R.only = e.target.checked; saveUrl(); draw(); };
-    $('#rNames').onchange = e => { R.names = e.target.checked; };
     $('#rRefresh').onclick = async () => {
       const b = A().busy('Reading the register again…');
       try { await A().guard(() => API.call('adminRefresh')); R.data = null; await load(true); draw(); A().toast('Report refreshed.'); } catch (e) {} finally { b.done(); }
@@ -220,19 +218,63 @@
     if (lines.length === 1) return A().toast('No pending officers in this report.', true);
     download(lines, fname('csv').replace('Followup', 'Pending_officers')); A().toast(`Downloaded ${lines.length - 1} pending officers.`);
   }
-  async function pdf() {
+  // follow-up PDF columns; Circle and Division always print
+  const PDF_COLS = [
+    ['officers', 'Officers', 34, true, (s) => s.t],
+    ['complete', 'Complete', 42, true, (s) => s.full],
+    ['partial', 'Partial', 34, true, (s) => s.part],
+    ['any', 'Any verified', 52, true, (s) => `${s.any} (${pct(s.any, s.t)}%)`],
+    ['awaiting', 'Awaiting', 38, true, (s) => s.pend || ''],
+    ['notfilled', 'Not filled', 40, true, (s) => s.nf],
+    ['pctnf', '% not filled', 42, true, (s) => pct(s.nf, s.t) + '%'],
+    ['missing', 'Missing data', 40, true, (s) => s.miss || ''],
+    ['last', 'Last activity', 54, false, (s, isTotal) => isTotal ? '' : s.last ? day(s.last) : 'No activity'],
+    ['remarks', 'Remarks / follow-up', '*', false, () => ''],
+  ];
+  const COLS_KEY = 'upmc_report_pdf_cols';
+  function savedCols() {
+    try { const v = JSON.parse(localStorage.getItem(COLS_KEY) || 'null'); if (Array.isArray(v) && v.length) return v.filter(k => PDF_COLS.some(c => c[0] === k)); } catch (e) {}
+    return PDF_COLS.map(c => c[0]);
+  }
+  function pdf() {
     if (!R.data) return;
+    const on = new Set(savedCols());
+    const dlg = A().smallDialog('repPdf', `
+      <div class="dhead"><div class="initials FR addav">⇩</div>
+        <div><h2>Follow-up PDF</h2><div class="sub">Choose what to print. Circle and division are always included.</div></div>
+        <button class="x" data-close aria-label="Close">×</button></div>
+      <div class="dbody">
+        <div class="colpick">${PDF_COLS.map(([k, l]) => `<label class="rchk"><input type="checkbox" data-col="${k}"${on.has(k) ? ' checked' : ''}> ${esc(l)}</label>`).join('')}</div>
+        <div class="colquick"><button class="btn sm ghost" data-q="all">Select all</button><button class="btn sm ghost" data-q="call">Only what a call needs</button></div>
+        <label class="rchk namesopt"><input type="checkbox" id="pNames"${R.names ? ' checked' : ''}> Add the names of pending officers, division-wise, after the table</label>
+      </div>
+      <div class="dfoot"><span class="sp"></span><button class="btn" data-close>Cancel</button><button class="btn primary" id="pGo">${A().icon.down} Download PDF</button></div>`);
+    const boxes = [...dlg.el.querySelectorAll('[data-col]')];
+    dlg.el.querySelectorAll('[data-q]').forEach(b => b.onclick = () => {
+      const pick = b.dataset.q === 'all' ? null : ['officers', 'notfilled', 'pctnf', 'missing', 'last', 'remarks'];
+      boxes.forEach(x => x.checked = !pick || pick.includes(x.dataset.col));
+    });
+    dlg.el.querySelector('#pGo').onclick = async () => {
+      const keys = boxes.filter(x => x.checked).map(x => x.dataset.col);
+      R.names = dlg.el.querySelector('#pNames').checked;
+      try { localStorage.setItem(COLS_KEY, JSON.stringify(keys)); } catch (e) {}
+      dlg.close();
+      await makePdf(keys);
+    };
+  }
+  async function makePdf(keys) {
     if (!window.pdfMake) return A().toast('The PDF tool is still loading. Try again in a moment.', true);
     const F = build(), T = F.total, rows = exportRows(F);
+    const cols = PDF_COLS.filter(c => keys.includes(c[0]));
+    const hasStar = cols.some(c => c[2] === '*');
     const b = A().busy('Preparing the follow-up report…', false, 'pdf');
     try {
       const body = rows.map(({ kind, s }) => {
-        const row = [kind === 'c' ? s.c : '', kind === 'c' ? (R.group === 'cd' ? 'Circle total' : '') : s.d, s.t, s.full, s.part, `${s.any} (${pct(s.any, s.t)}%)`, s.pend || '', s.nf, pct(s.nf, s.t) + '%', s.miss || '', s.last ? day(s.last) : 'No activity', ''];
+        const row = [kind === 'c' || R.group === 'd' ? s.c : '', kind === 'c' ? (R.group === 'cd' ? 'Circle total' : '') : s.d, ...cols.map(c => c[4](s, false))];
         if (kind === 'c' && R.group === 'cd') row._bold = true;
-        if (kind === 'd' && R.group === 'd') row[0] = s.c;
         return row;
       });
-      body.push(Object.assign(['Total', '', T.t, T.full, T.part, `${T.any} (${pct(T.any, T.t)}%)`, T.pend, T.nf, pct(T.nf, T.t) + '%', T.miss, '', ''], { _bold: true }));
+      body.push(Object.assign(['Total', '', ...cols.map(c => c[4](T, true))], { _bold: true }));
       const after = [];
       if (R.names) {
         after.push({ text: 'Officers to follow up, division-wise', bold: true, fontSize: 11, margin: [0, 14, 0, 4], pageBreak: 'before' });
@@ -242,15 +284,15 @@
           after.push({ fontSize: 7.5, color: '#3d3c38', text: d.people.map(({ o, miss }) => `${FL.cleanName(o.data.Name)} (${o.data.Designation || o.cadre}, ${o.id}) – ${(STATUS[o.status] || o.status).toLowerCase()}${miss.length ? ', blank: ' + miss.map(FL.label).join(', ') : ''}`).join(';   ') });
         });
       }
+      const pctCol = cols.findIndex(c => c[0] === 'pctnf');
       const name = await PDF.report({
         title: 'Division follow-up report', fileName: fname('pdf'),
         subtitle: `${CAD_OPTS.find(x => x[0] === R.cadre)[1]} · data as of ${R.data.builtAt} · printed ${stamp()}`,
         filters: [GROUPS.find(x => x[0] === R.group)[1], 'sorted by ' + SORTS.find(x => x[0] === R.sort)[1].toLowerCase(), R.only ? 'only divisions with work pending' : ''].filter(Boolean).join('  ·  '),
         kpis: [['Officers', T.t], ['All details verified', T.full, '#1d6b31'], ['Posting verified only', T.part, '#1f4f9e'], ['Any verified', `${T.any} (${pct(T.any, T.t)}%)`, '#1d6b31'],
           ['Not filled', `${T.nf} (${pct(T.nf, T.t)}%)`, '#b42318'], ['Divisions with no activity', Object.values(F.divs).filter(d => !d.last).length, '#b42318']],
-        columns: [{ label: 'Circle', w: 58, bold: true, blank: true }, { label: 'Division', w: 92, blank: true }, { label: 'Officers', w: 34, num: true }, { label: 'Complete', w: 42, num: true },
-          { label: 'Partial', w: 32, num: true }, { label: 'Any verified', w: 50, num: true }, { label: 'Awaiting', w: 36, num: true }, { label: 'Not filled', w: 38, num: true },
-          { label: '% not filled', w: 40, num: true, warn: r => parseInt(r[8], 10) >= 75 }, { label: 'Missing data', w: 38, num: true }, { label: 'Last activity', w: 52 }, { label: 'Remarks / follow-up', w: '*', blank: true, tall: true }],
+        columns: [{ label: 'Circle', w: 64, bold: true, blank: true }, { label: 'Division', w: hasStar ? 110 : '*', blank: true },
+          ...cols.map(([k, l, w, num], i) => ({ label: l, w, num, blank: k === 'remarks', tall: k === 'remarks', warn: i === pctCol ? r => parseInt(r[2 + pctCol], 10) >= 75 : undefined }))],
         rows: body, after,
       });
       A().toast('Downloaded ' + name);
