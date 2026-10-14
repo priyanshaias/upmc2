@@ -24,7 +24,7 @@
   const DISTRICTS = ['Alipurduar', 'Bankura', 'Birbhum', 'Cooch Behar', 'Dakshin Dinajpur', 'Darjeeling', 'Hooghly', 'Howrah', 'Jalpaiguri', 'Jhargram',
     'Kalimpong', 'Kolkata', 'Malda', 'Murshidabad', 'Nadia', 'North 24 Parganas', 'Paschim Bardhaman', 'Paschim Medinipur', 'Purba Bardhaman',
     'Purba Medinipur', 'Purulia', 'South 24 Parganas', 'Uttar Dinajpur', 'Outside West Bengal'];
-  const STATUS = ['Deceased', 'Retired', 'Absconding', 'Suspended', 'Others (write in Remarks)'];
+  const STATUS = ['Deceased', 'Retired', 'Promoted', 'Absconding', 'Suspended', 'Others (write in Remarks)'];
   const vlog = [];   // demo verifications, for the history view
   const stOf = d => d.Verification === 'Verified - All correct' || d.Verification === 'Corrected' ? 'verified' : d.Verification === 'Verified - Posting and home district' ? 'partial' : 'unverified';
   const HEAD = {
@@ -91,6 +91,7 @@
         if (cadre === 'FG') { d['Joined as FG'] = d['Entry in Govt Service']; if (d.Designation === 'HFG') d['Joined as HFG'] = date(r, 2010, 2022); }
         if (d['Posting List Match'] === 'Not present in posting list') { d['Present Range / Office'] = ''; d['Name in Posting List'] = ''; d['Posting List: Circle / Division'] = '';
           d.Remarks = 'Not present in posting list (29.08.2026) — no matching name found.'; }
+        if (r() < .08) d['Deceased/Retired/Absconding etc'] = STATUS[Math.floor(r() * STATUS.length)];
         if (d.Verification !== 'Pending') { d['Last Updated By'] = 'Demo operator (Range Office) · demo@example.com'; d['Last Updated On'] = '02-10-2026 11:20'; }
         list.push({ cadre, id: d['Employee ID'], data: d, pending: [], status: stOf(d) });
       }

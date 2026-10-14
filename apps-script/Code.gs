@@ -510,6 +510,18 @@ function listValue_(name, value) {
   C.put(flag, '1', CACHE_TTL);
 }
 
+/** Points the status dropdown of each cadre sheet at the whole Lists column, so newly added values (Promoted) are accepted. */
+function statusValidation_() {
+  const lists = sheet_(CONFIG.LISTS), lh = lists.getRange(1, 1, 1, lists.getLastColumn()).getValues()[0].map(x => String(x).trim());
+  const lc = lh.indexOf('Deceased/Retired/Absconding etc') + 1; if (!lc) return;
+  const rule = SpreadsheetApp.newDataValidation().requireValueInRange(lists.getRange(2, lc, 49, 1), true).setAllowInvalid(false).build();
+  Object.keys(CADRES).forEach(code => {
+    const sh = sheet_(CADRES[code].sheet), h = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(x => String(x).trim());
+    const c = h.indexOf('Deceased/Retired/Absconding etc') + 1;
+    if (c && sh.getMaxRows() > 1) sh.getRange(2, c, sh.getMaxRows() - 1, 1).setDataValidation(rule);
+  });
+}
+
 function appendLog_(rows) {
   const sh = logSheet_();
   sh.getRange(sh.getLastRow() + 1, 1, rows.length, rows[0].length).setNumberFormat('@').setValues(rows);
@@ -719,6 +731,7 @@ function keepWarm() {
 function setup() {
   Logger.log('Sheet: ' + ss_().getName());
   readLists_(); logSheet_(); listValue_('Verification', VERIFIED_POSTING);
+  listValue_('Deceased/Retired/Absconding etc', 'Promoted'); statusValidation_();
   const all = buildAll_(); Logger.log('Cache ready: ' + Object.keys(all.divs).length + ' divisions');
   Object.keys(CADRES).forEach(c => Logger.log(c + ': ' + readSheet_(c).rows.length + ' officers'));
   const L = local_();

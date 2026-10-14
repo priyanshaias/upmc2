@@ -524,3 +524,24 @@ input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--primary); 
 .snail-ld .sn-trail { transform-origin: left center; animation: snTrail 4s ease-in-out infinite; }
 .snail-ld .sn-st { transform-origin: left bottom; animation: snStalk 1.2s ease-in-out infinite; }
 .snail-ld .sn-foot { transform-origin: left center; animation: snInch .8s ease-in-out infinite; }
+
+/* service status: gone = deceased / retired / promoted (red), flag = absconding / suspended (orange) */
+.pill.svc-gone { background: #fde2e1; color: #b42318; } .pill.svc-flag { background: var(--optional-soft); color: var(--optional-ink); }
+.pill.svc-other { background: var(--surface-sunken); color: var(--text-subtle); } .pill.svc-working { background: var(--prelims-soft); color: var(--prelims-ink); }
+.ocard.gone { background: #fff4f3; border-color: #f4b4ae; } .ocard.gone:hover { border-color: #e58c84; }
+.ocard.flag { border-color: var(--optional-edge); }
+.ocard .foot .pill + .pill { margin-left: 0; }
+.group-h .gone-n { font-size: 12px; font-weight: 700; color: #b42318; margin-left: 4px; }
+.exbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: -4px 0 14px; } .exbar .faint { font-size: 13px; }
+.dtable .tn + .faint + .pill { margin-top: 4px; }
+.msel { position: relative; }
+.msel-btn { min-height: 38px; border: 1px solid var(--border); border-radius: var(--radius-9); padding: 0 30px 0 10px; background: var(--surface); font: inherit; font-size: 14px; font-weight: 500; color: var(--ink); width: 100%; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; position: relative; }
+.msel-btn::after { content: "▾"; position: absolute; right: 10px; top: 50%; transform: translateY(-50%); color: var(--text-subtle); font-size: 12px; }
+.msel-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 20; min-width: 230px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-12);
+  box-shadow: 0 10px 30px rgba(25,25,24,.14); padding: 6px; }
+.msel-menu[hidden] { display: none; }
+.msel-menu label { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--radius-7); cursor: pointer; font-size: 13.5px; color: var(--ink); font-weight: 500; }
+.msel-menu label:hover { background: var(--surface-hover); }
+.msel-foot { display: flex; justify-content: space-between; border-top: 1px solid var(--line); margin-top: 4px; padding-top: 6px; }
+.fs .msel-menu input[type=checkbox] { width: 16px; height: 16px; min-height: 0; padding: 0; flex: none; margin: 0; box-shadow: none; }

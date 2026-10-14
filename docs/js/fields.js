@@ -88,5 +88,14 @@
     return out;
   }
 
-  window.UPMC_FIELDS = { label, sections, tenure, fmtYears, initials, cleanName, needsAttention, toDate, missing, requiredFields };
+  // Service status (the "Deceased/Retired/Absconding etc" column): gone = no longer in the division (red), flag = still on the rolls (orange)
+  const SVC_FIELD = 'Deceased/Retired/Absconding etc';
+  const SVC_GONE = ['Deceased', 'Retired', 'Promoted'], SVC_FLAG = ['Absconding', 'Suspended'];
+  const SVC_ALL = ['Working', 'Deceased', 'Retired', 'Promoted', 'Absconding', 'Suspended', 'Others (write in Remarks)'];
+  function service(d) {
+    const v = String((d && d[SVC_FIELD]) || '').trim() || 'Working';
+    return { v, short: v.replace(/\s*\(.*\)$/, ''), kind: v === 'Working' ? 'working' : SVC_GONE.includes(v) ? 'gone' : SVC_FLAG.includes(v) ? 'flag' : 'other' };
+  }
+
+  window.UPMC_FIELDS = { label, sections, tenure, fmtYears, initials, cleanName, needsAttention, toDate, missing, requiredFields, service, SVC_ALL, SVC_GONE };
 })();

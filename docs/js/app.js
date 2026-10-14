@@ -325,16 +325,16 @@
   const tickOf = o => o.status === 'verified' ? TICK : o.status === 'partial' ? TICK_P : '';
 
   function card(o, i) {
-    const d = o.data, attn = FL.needsAttention(d) && o.status !== 'verified' && o.status !== 'partial';
+    const d = o.data, sv = FL.service(d), attn = FL.needsAttention(d) && o.status !== 'verified' && o.status !== 'partial' && sv.kind !== 'gone';
     const rng = d['Present Range / Office'] || '', beat = d['Present Beat'] ? ' · ' + d['Present Beat'] : '';
     const k = esc(o.cadre + '|' + o.id);
-    return `<div class="ocard" role="button" tabindex="0" data-k="${k}" style="animation-delay:${Math.min(i, 24) * 25}ms" aria-label="Open ${esc(FL.cleanName(d.Name))}">
+    return `<div class="ocard${sv.kind === 'gone' ? ' gone' : sv.kind === 'flag' ? ' flag' : ''}" role="button" tabindex="0" data-k="${k}" style="animation-delay:${Math.min(i, 24) * 25}ms" aria-label="Open ${esc(FL.cleanName(d.Name))}">
       <button class="dl" data-dl="${k}" title="Download information sheet (PDF)" aria-label="Download PDF of ${esc(FL.cleanName(d.Name))}">${icon.down}</button>
       <div class="top"><div class="initials ${o.cadre}">${esc(FL.initials(d.Name))}</div>
         <div><div class="nm">${esc(FL.cleanName(d.Name))}${tickOf(o)}</div><div class="id">HRMS ${esc(o.id)}</div></div></div>
       <div class="meta"><span class="tag">${esc(d.Designation || o.cadre)}</span> ${esc(rng + beat) || '<span class="faint">Range not recorded</span>'}</div>
       ${o.incoming ? `<div class="faint">From ${esc(o.from || '')}</div>` : ''}
-      <div class="foot">${o.incoming ? '<span class="pill pending">Transfer in · awaiting approval</span>' : o.isNew ? '<span class="pill pending">New · awaiting approval</span>' : `<span class="pill ${o.status}">${STATUS_TXT[o.status]}</span>${attn ? '<span class="pill attn">Needs attention</span>' : ''}`}</div>
+      <div class="foot">${sv.kind !== 'working' ? `<span class="pill svc-${sv.kind}">${esc(sv.short)}</span>` : ''}${o.incoming ? '<span class="pill pending">Transfer in · awaiting approval</span>' : o.isNew ? '<span class="pill pending">New · awaiting approval</span>' : `<span class="pill ${o.status}">${STATUS_TXT[o.status]}</span>${attn ? '<span class="pill attn">Needs attention</span>' : ''}`}</div>
     </div>`;
   }
   const CADRE_ONE = { FR: 'Forest Ranger', DFR: 'Deputy Ranger / Forester', FG: 'Forest Guard / HFG' };
@@ -348,7 +348,8 @@
     const html = ['FR', 'DFR', 'FG'].map(c => {
       const g = vis.filter(o => o.cadre === c), show = canAdd && (S.cadre === 'all' || S.cadre === c);
       if (!g.length && !show) return '';
-      return `<div class="group-h"><h3>${CADRE_TXT[c]}</h3><span>${g.length}</span></div><div class="cards">${g.map(o => card(o, i++)).join('')}${show ? addCard(c) : ''}</div>`;
+      const gone = g.filter(o => FL.service(o.data).kind === 'gone').length;
+      return `<div class="group-h"><h3>${CADRE_TXT[c]}</h3><span>${g.length}</span>${gone ? `<small class="gone-n">incl. ${gone} not serving</small>` : ''}</div><div class="cards">${g.map(o => card(o, i++)).join('')}${show ? addCard(c) : ''}</div>`;
     }).join('');
     $('#groups').innerHTML = html || `<div class="empty-state"><b>No officers here.</b>Try another filter.</div>`;
     app.querySelectorAll('.addcard').forEach(b => b.onclick = () => openFinder(b.dataset.add));

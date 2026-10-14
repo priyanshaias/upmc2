@@ -9,8 +9,8 @@
   const isFull = v => v === 'verified' || v === 'corrected';
   const HOME = { yes: 'Yes', no: 'No', unknown: 'Not known' };
   const MATCH = ['Matched', 'Matched (name differs)', 'Posting list shows other division', 'Not present in posting list', 'Not in Gradation List'];
-  const EMPTY = { q: '', circle: '', division: '', ver: '', home: '', basis: 'posting', band: '', min: '', match: '', desig: '', retire: '', missing: '' };
-  const D = { cadre: 'FR', data: {}, loading: {}, f: Object.assign({}, EMPTY), limit: 3, sort: { k: 'circle', dir: 1 }, shown: 100, by: 'circle', dsort: 'low' };
+  const EMPTY = { q: '', circle: '', division: '', ver: '', home: '', basis: 'posting', band: '', min: '', match: '', desig: '', retire: '', missing: '', svc: '' };
+  const D = { excl: true, cadre: 'FR', data: {}, loading: {}, f: Object.assign({}, EMPTY), limit: 3, sort: { k: 'circle', dir: 1 }, shown: 100, by: 'circle', dsort: 'low' };
 
   /* ---------------- data ---------------- */
   const yrs = s => { const d = FL.toDate(s); return d ? Math.max(0, (Date.now() - d) / (365.25 * 864e5)) : null; };
@@ -22,6 +22,7 @@
       home: h && r ? (h === r ? 'yes' : 'no') : 'unknown',
       ver: o.status === 'verified' ? (d.Verification === 'Corrected' ? 'corrected' : 'verified') : o.status,
       retire: (() => { const t = FL.toDate(d['Date of Retirement']); return t ? (t - Date.now()) / (365.25 * 864e5) : null; })(),
+      svc: FL.service(d).v, gone: FL.service(d).kind === 'gone',
       name: FL.cleanName(d.Name), search: [d.Name, o.id, d['Present Range / Office'], d['Present Beat'], d.Remarks, d['Posting List Remarks'], d.Division].join(' ').toLowerCase(),
     };
     return o;
@@ -39,8 +40,12 @@
 
   /* ---------------- filtering ---------------- */
   const inBand = (y, b) => { const x = BANDS.find(z => z[2] === b); return y != null && x && y >= x[0] && y < x[1]; };
+  const svcList = f => f.svc ? f.svc.split('|') : [];
+  // "Exclude officers no longer in the division": deceased / retired / promoted are left out, unless picked in the status filter
+  const serving = o => !D.excl || !o.x.gone || svcList(D.f).includes(o.x.svc);
   function pass(o, f, skip) {
     const x = o.x, d = o.data;
+    if (skip !== 'svc' && f.svc && !svcList(f).includes(x.svc)) return false;
     if (skip !== 'q' && f.q && !x.search.includes(f.q.toLowerCase())) return false;
     if (skip !== 'circle' && f.circle && d.Circle !== f.circle) return false;
     if (skip !== 'division' && skip !== 'circle' && f.division && d.Division !== f.division) return false;
@@ -58,7 +63,8 @@
     }
     return true;
   }
-  const all = () => (D.data[D.cadre] || { officers: [] }).officers;
+  const everyone = () => (D.data[D.cadre] || { officers: [] }).officers;
+  const all = () => everyone().filter(serving);
   const view = skip => all().filter(o => pass(o, D.f, skip));
 
   /* ---------------- url state ---------------- */
@@ -66,6 +72,7 @@
     const p = new URLSearchParams(); p.set('c', D.cadre);
     Object.keys(D.f).forEach(k => { if (D.f[k] !== EMPTY[k]) p.set(k, D.f[k]); });
     if (D.limit !== 3) p.set('limit', D.limit);
+    if (!D.excl) p.set('everyone', '1');
     if (D.by === 'division') p.set('by', 'division');
     if (D.dsort !== 'low') p.set('dsort', D.dsort);
     history.replaceState(null, '', '#/dash?' + p.toString());
@@ -75,6 +82,7 @@
     D.cadre = ['FR', 'DFR', 'FG'].includes(q.get('c')) ? q.get('c') : D.cadre;
     D.f = Object.assign({}, EMPTY); Object.keys(EMPTY).forEach(k => { if (q.has(k)) D.f[k] = q.get(k); });
     if (q.has('limit')) D.limit = Number(q.get('limit')) || 3;
+    D.excl = q.get('everyone') !== '1';
     D.by = q.get('by') === 'division' ? 'division' : 'circle';
     D.dsort = ['low', 'size', 'az'].includes(q.get('dsort')) ? q.get('dsort') : 'low';
   }
@@ -109,7 +117,7 @@
   function drawTabs() {
     const el = $('#ctabs'); if (!el) return;
     el.innerHTML = CADRES.map(([c, label]) => {
-      const d = D.data[c], tot = d ? d.officers.length : null, v = d ? d.officers.filter(o => o.x.ver === 'verified' || o.x.ver === 'corrected').length : 0, p = pct(v, tot);
+      const d = D.data[c], list = d ? d.officers.filter(o => !D.excl || !o.x.gone) : [], tot = d ? list.length : null, v = list.filter(o => o.x.ver === 'verified' || o.x.ver === 'corrected').length, p = pct(v, tot);
       return `<button class="ctab${c === D.cadre ? ' on' : ''}" data-c="${c}">
         <span class="ring sm" style="--p:${p}"><i>${d ? p + '%' : '…'}</i></span>
         <span><b>${label}</b><small>${d ? `${n(tot)} officers · ${n(v)} verified` : 'loading…'}</small></span></button>`;
@@ -130,6 +138,8 @@
     $('#asof').textContent = `Data as of ${data.builtAt || 'now'} · ${CADRES.find(x => x[0] === D.cadre)[1]} · click any number or bar to filter.`;
     const opt = (v, l, cur) => `<option value="${A().esc(v)}"${v === cur ? ' selected' : ''}>${A().esc(l)}</option>`;
     $('#dbody').innerHTML = `
+      <div class="exbar"><button class="tc-switch${D.excl ? ' on' : ''}" id="exSwitch" role="switch" aria-checked="${D.excl}"><span class="knob" aria-hidden="true"></span>Exclude officers no longer in the division</button>
+        <span class="faint" id="exNote"></span></div>
       <section class="kpis dk" id="kpis"></section>
       <section class="charts" id="charts"></section>
       <section class="fbar" id="fbar">
@@ -138,6 +148,9 @@
           <label class="fs"><span>Circle</span><select id="fcircle">${opt('', 'All circles', D.f.circle)}${circles.map(c => opt(c, c, D.f.circle)).join('')}</select></label>
           <label class="fs"><span>Division</span><select id="fdivision"></select></label>
           <label class="fs"><span>Verification</span><select id="fver">${opt('', 'All', D.f.ver)}${opt('anyverified', 'All verified (any)', D.f.ver)}${opt('anyposting', 'Posting verified (incl. all)', D.f.ver)}${Object.entries(VER).map(([k, l]) => opt(k, l, D.f.ver)).join('')}</select></label>
+          <div class="fs msel"><span>Service status</span><button type="button" class="msel-btn" id="fsvcBtn" aria-haspopup="true" aria-expanded="false"></button>
+            <div class="msel-menu" id="fsvcMenu" hidden>${FL.SVC_ALL.map(v => `<label><input type="checkbox" value="${A().esc(v)}"> <span class="pill svc-${FL.service({ 'Deceased/Retired/Absconding etc': v }).kind}">${A().esc(v.replace(/\s*\(.*\)$/, ''))}</span></label>`).join('')}
+              <div class="msel-foot"><button type="button" class="btn sm ghost" id="fsvcClear">Clear</button><button type="button" class="btn sm" id="fsvcDone">Done</button></div></div></div>
           <label class="fs"><span>Posted in home district</span><select id="fhome">${opt('', 'All', D.f.home)}${Object.entries(HOME).map(([k, l]) => opt(k, l, D.f.home)).join('')}</select></label>
         </div>
         <div class="frow">
@@ -161,6 +174,15 @@
     ['ver', 'home', 'basis', 'band', 'match', 'desig', 'retire', 'missing'].forEach(k => on('f' + k, 'change', e => setF({ [k]: e.target.value })));
     on('fmin', 'change', e => setF({ min: e.target.value }));
     on('flimit', 'change', e => { D.limit = Math.max(1, Number(e.target.value) || 3); saveUrl(); drawDynamic(); });
+    const mb = $('#fsvcBtn'), mm = $('#fsvcMenu');
+    const shut = () => { mm.hidden = true; mb.setAttribute('aria-expanded', 'false'); };
+    mb.onclick = e => { e.stopPropagation(); mm.hidden = !mm.hidden; mb.setAttribute('aria-expanded', String(!mm.hidden)); };
+    mm.onclick = e => e.stopPropagation();
+    document.addEventListener('click', () => { if (!mm.hidden) shut(); });
+    mm.querySelectorAll('input').forEach(i => i.onchange = () => setF({ svc: [...mm.querySelectorAll('input:checked')].map(x => x.value).join('|') }));
+    $('#fsvcClear').onclick = () => setF({ svc: '' });
+    $('#fsvcDone').onclick = shut;
+    $('#exSwitch').onclick = () => { D.excl = !D.excl; const b = $('#exSwitch'); b.classList.toggle('on', D.excl); b.setAttribute('aria-checked', String(D.excl)); saveUrl(); drawTabs(); syncControls(); drawDynamic(); };
     drawDynamic();
   }
 
@@ -171,6 +193,13 @@
     if (fd) fd.innerHTML = `<option value="">${D.f.circle ? 'All divisions' : 'All divisions'}</option>` + divs.map(d => `<option${d === D.f.division ? ' selected' : ''}>${A().esc(d)}</option>`).join('');
     ['circle', 'division', 'ver', 'home', 'basis', 'band', 'match', 'desig', 'retire', 'missing'].forEach(k => set('f' + k, D.f[k]));
     set('fmin', D.f.min); const q = $('#fq'); if (q && document.activeElement !== q) q.value = D.f.q;
+    const picked = svcList(D.f), mb = $('#fsvcBtn');
+    if (mb) {
+      mb.textContent = picked.length ? picked.map(v => v.replace(/\s*\(.*\)$/, '')).join(', ') : 'All';
+      $('#fsvcMenu').querySelectorAll('input').forEach(i => i.checked = picked.includes(i.value));
+    }
+    const hidden = everyone().filter(o => !serving(o)).length, en = $('#exNote');
+    if (en) en.textContent = D.excl ? (hidden ? `${n(hidden)} deceased / retired / promoted hidden` : 'No deceased, retired or promoted officers in this cadre') : `Showing everyone, including ${n(everyone().filter(o => o.x.gone).length)} not serving`;
   }
 
   /* ---------------- dynamic parts ---------------- */
@@ -278,6 +307,7 @@
     if (f.match) out.push(['match', `Posting list: ${f.match}`]);
     if (f.desig) out.push(['desig', `Designation: ${f.desig}`]);
     if (f.retire) out.push(['retire', `Retiring within ${f.retire} yr${f.retire === '1' ? '' : 's'}`]);
+    if (f.svc) out.push(['svc', `Service status: ${svcList(f).map(v => v.replace(/\s*\(.*\)$/, '')).join(', ')}`]);
     if (f.missing) out.push(['missing', `Missing: ${{ home: 'home district', rdist: 'district of range', range: 'present range' }[f.missing]}`]);
     return out;
   }
@@ -315,7 +345,7 @@
     $('#tbl').innerHTML = `<div class="tscroll"><table class="dtable"><thead><tr>${th}</tr></thead><tbody>${rows.map(o => {
       const d = o.data, x = o.x, k = o.cadre + '|' + o.id, same = x.home === 'yes';
       return `<tr data-k="${esc(k)}" tabindex="0">
-        <td><div class="tn">${esc(x.name)}${isFull(x.ver) ? A().TICK : x.ver === 'partial' ? A().TICK_P : ''}</div><div class="faint num">${esc(o.id)}</div></td>
+        <td><div class="tn">${esc(x.name)}${isFull(x.ver) ? A().TICK : x.ver === 'partial' ? A().TICK_P : ''}</div><div class="faint num">${esc(o.id)}</div>${x.svc !== 'Working' ? `<span class="pill svc-${FL.service(d).kind}">${esc(FL.service(d).short)}</span>` : ''}</td>
         <td><span class="tag">${esc(d.Designation || o.cadre)}</span></td>
         <td>${esc(d.Circle)}<div class="faint">${esc(d.Division)}</div></td>
         <td>${esc(d['Present Range / Office']) || '<span class="faint">—</span>'}${d['Present Beat'] ? `<div class="faint">${esc(d['Present Beat'])}</div>` : ''}</td>
